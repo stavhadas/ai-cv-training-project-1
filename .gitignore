@@ -1,0 +1,27 @@
+# Data — never tracked; fetched from Kaggle.
+# Leading slash anchors this to the repo root, so it does not also swallow src/pcbi/data/.
+/data/
+
+# Secrets
+.env
+
+# Model weights and checkpoints
+*.pt
+*.pth
+*.ckpt
+
+# Experiment tracking / run outputs
+wandb/
+/outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# Note: uv.lock and reports/ are deliberately NOT ignored — both are committed.
