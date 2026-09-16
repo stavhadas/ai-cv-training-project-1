@@ -60,13 +60,60 @@ uv run pcbi smoke           # 20 fake steps; proves the plumbing before a real r
 
 On Kaggle the key comes from a Secret named `WANDB_API_KEY`. With no key anywhere, `pcbi smoke`
 falls back to offline mode and writes to `wandb/`, which you can upload later with `wandb sync`.
+## Compute
+
+### Kaggle
+
+2x Tesla T4 (15360MiB each), driver 580.159.04, CUDA 13.0.
+
+<details>
+<summary><code>nvidia-smi</code> output</summary>
+
+```
+Wed Sep 16 09:38:10 2026
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.159.04             Driver Version: 580.159.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla T4                       Off |   00000000:00:04.0 Off |                    0 |
+| N/A   38C    P8             10W /   70W |       0MiB /  15360MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+|   1  Tesla T4                       Off |   00000000:00:05.0 Off |                    0 |
+| N/A   44C    P8             10W /   70W |       0MiB /  15360MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+```
+
+</details>
+
+Tooling: `torch 2.10.0+cu128` · `timm 1.0.26` · 2 GPUs visible.
+
+### Laptop CPU
+
+| | |
+|---|---|
+| Model | 13th Gen Intel(R) Core(TM) i7-1360P |
+| Physical cores | 12 |
+| Logical processors | 16 |
 
 ## Stage 0 progress
 
 - [x] Step 1 — repository scaffold
 - [x] Step 2 — Kaggle notebook wrapper
-- [ ] Step 3 — W&B smoke test
-- [ ] Step 4 — `pcbi audit` dataset inventory
-- [ ] Step 5 — laptop hardware profile
-- [ ] Step 6 — interpret the audit, fill the metadata table
-- [ ] Step 7 — record the compute setup
+- [x] Step 3 — W&B smoke test
+- [x] Step 4 — `pcbi audit` dataset inventory
+- [x] Step 5 — laptop hardware profile
+- [x] Step 6 — interpret the audit, fill the metadata table
+- [x] Step 7 — record the compute setup
