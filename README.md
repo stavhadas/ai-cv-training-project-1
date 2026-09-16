@@ -46,13 +46,25 @@ Code lives in **one** place, this repository. The laptop writes code and measure
 GitHub Actions checks every push, Kaggle clones the repo and trains on its GPUs, and W&B collects
 results from wherever a run happened. Notebooks are launchers only.
 
-Dependencies are intentionally minimal for now. `torch`, `timm`, and `wandb` are added in Stage 2,
-when there is training code that needs them.
+Dependencies are intentionally minimal. `wandb` is here because Stage 0 logs to it; `torch` and
+`timm` arrive in Stage 2, when there is training code that needs them.
+
+## Experiment tracking
+
+Runs log to the W&B project `pcb-inspector`. Authenticate once per machine:
+
+```bash
+uv run wandb login          # laptop: the key lands in ~/.netrc, never in the repo
+uv run pcbi smoke           # 20 fake steps; proves the plumbing before a real run depends on it
+```
+
+On Kaggle the key comes from a Secret named `WANDB_API_KEY`. With no key anywhere, `pcbi smoke`
+falls back to offline mode and writes to `wandb/`, which you can upload later with `wandb sync`.
 
 ## Stage 0 progress
 
 - [x] Step 1 — repository scaffold
-- [ ] Step 2 — Kaggle notebook wrapper
+- [x] Step 2 — Kaggle notebook wrapper
 - [ ] Step 3 — W&B smoke test
 - [ ] Step 4 — `pcbi audit` dataset inventory
 - [ ] Step 5 — laptop hardware profile

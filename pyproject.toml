@@ -3,7 +3,11 @@ name = "pcbi"
 version = "0.1.0"
 description = "Bench-top PCB solder-joint inspector and CPU-latency backbone benchmark."
 requires-python = ">=3.10"   # loose on purpose: Kaggle's Python may differ from the laptop's
-dependencies = ["typer", "psutil"]
+dependencies = [
+    "typer",
+    "psutil",
+    "wandb>=0.30.0",
+]
 
 [project.scripts]
 pcbi = "pcbi.cli:app"        # typing `pcbi` runs the Typer app defined in src/pcbi/cli.py
