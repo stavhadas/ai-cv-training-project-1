@@ -371,6 +371,7 @@ dependencies = [
     { name = "pillow" },
     { name = "psutil" },
     { name = "py-cpuinfo" },
+    { name = "pyyaml" },
     { name = "typer" },
     { name = "wandb" },
 ]
@@ -386,6 +387,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "psutil" },
     { name = "py-cpuinfo", specifier = ">=9.0.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "typer" },
     { name = "wandb", specifier = ">=0.30.0" },
 ]
