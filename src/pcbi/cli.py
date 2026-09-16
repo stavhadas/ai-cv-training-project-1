@@ -7,6 +7,7 @@ import typer
 from pcbi import smoke as smoke_mod
 from pcbi.bench import env as env_mod
 from pcbi.data import audit as audit_mod
+from pcbi.data import ingest as ingest_mod
 from pcbi.data import show as show_mod
 
 app = typer.Typer(help="PCB solder-joint inspector.", no_args_is_help=True)
@@ -150,6 +151,40 @@ def show(
     out = out or Path("reports/qa") / default_name
     out.parent.mkdir(parents=True, exist_ok=True)
     grid.save(out)
+    typer.echo(f"wrote {out}")
+
+
+@app.command()
+def ingest(
+    root: Path = typer.Option(Path("data/raw"), help="Folder holding the unzipped dataset."),
+    out: Path = typer.Option(
+        Path("data/interim/polygons.csv"), help="Where to write the polygon-level CSV."
+    ),
+    taxonomy: Path = typer.Option(
+        ingest_mod.DEFAULT_TAXONOMY, help="Raw-label -> project-class mapping."
+    ),
+) -> None:
+    """Write one CSV row per joint-quality polygon, for Stage 1 training."""
+    if not root.is_dir():
+        typer.echo(f"No such folder: {root}", err=True)
+        raise typer.Exit(code=1)
+    if not taxonomy.is_file():
+        typer.echo(f"No such taxonomy file: {taxonomy}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        rows = ingest_mod.write_polygons_csv(root, out, taxonomy)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    images = {row["image_name"] for row in rows}
+    typer.echo(f"{len(images)} image(s), {len(rows)} polygon row(s)")
+    classes: dict[str, int] = {}
+    for row in rows:
+        classes[row["class"]] = classes.get(row["class"], 0) + 1
+    for class_name, count in sorted(classes.items(), key=lambda kv: -kv[1]):
+        typer.echo(f"  {class_name}: {count}")
     typer.echo(f"wrote {out}")
 
 

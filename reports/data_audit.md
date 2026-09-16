@@ -448,3 +448,5 @@ Viewed 3 cells, 22 images total, including 2 separate `V2`/`V2.1` pair sets (sat
 
 **Trade-off note (unchanged from the spec):** a wrong component ID is worse than a missing one — it silently mixes one component across splits, and the leakage test will still pass because it only checks the ID it was given. `not recoverable` is written above rather than guessed from timestamp order.
 
+**Stage 1 addendum:** the direction itself stayed unresolved here, but Stage 1's `pcbi ingest` needs *some* label to distinguish the two folders in `light_direction`, so it adopts a working assumption — `V2` = `bottom_to_top`, `V2.1` = `top_to_bottom` (`src/pcbi/data/ingest.py`, `LIGHT_DIRECTION_BY_VIEWPOINT`) — rather than leaving the column blank. This is an assumed convention, not a re-measurement; it should be corrected in that one place if it's ever checked against the physical bench setup.
+

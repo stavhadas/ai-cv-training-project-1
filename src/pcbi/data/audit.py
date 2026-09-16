@@ -73,6 +73,10 @@ class Annotation:
     height: int | None
     labels: Counter[str]
     source: str  # the annotation file this came from, relative to root
+    # Individual shapes ({"label", "points"}), in file order. Kept alongside the aggregate `labels`
+    # Counter because Stage 1's per-polygon ingest needs each polygon's own points, not just a
+    # count. Empty for layouts (e.g. COCO) that don't carry per-shape geometry through this path.
+    shapes: list[dict] = field(default_factory=list)
 
     @property
     def polygon_count(self) -> int:
@@ -155,24 +159,31 @@ def load_json_without_image_data(path: Path) -> object:
     return json.loads(raw)
 
 
+def shapes_of(record: dict) -> list[dict]:
+    """Each shape's label and points, in file order — the raw geometry `labels_of` counts up."""
+    return [
+        {"label": str(shape.get("label", "<missing label>")), "points": shape.get("points") or []}
+        for shape in record.get("shapes") or []
+        if isinstance(shape, dict)
+    ]
+
+
 def labels_of(record: dict) -> Counter[str]:
-    counts: Counter[str] = Counter()
-    for shape in record.get("shapes") or []:
-        if isinstance(shape, dict):
-            counts[str(shape.get("label", "<missing label>"))] += 1
-    return counts
+    return Counter(shape["label"] for shape in shapes_of(record))
 
 
 def annotation_from_record(record: dict, source: str, fallback_name: str) -> Annotation:
     image_name = record.get("imagePath") or fallback_name
     # LabelMe writes imagePath with the annotator's own path separators; keep the leaf only.
     image_name = str(image_name).replace("\\", "/").rsplit("/", 1)[-1]
+    shapes = shapes_of(record)
     return Annotation(
         image_name=image_name,
         width=record.get("imageWidth"),
         height=record.get("imageHeight"),
-        labels=labels_of(record),
+        labels=Counter(shape["label"] for shape in shapes),
         source=source,
+        shapes=shapes,
     )
 
 

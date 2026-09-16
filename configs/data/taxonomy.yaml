@@ -1,0 +1,19 @@
+# Label taxonomy for the joint-quality task (annotations under V2 / V2.1).
+#
+# `classes` maps each raw LabelMe label to the project's class name. `pcbi ingest` only ever reads
+# annotations whose image resolves to V2 or V2.1 (see audit.py's TASK_BY_VIEWPOINT), so a placement
+# label reaching this mapping would already be a bug upstream — the `exclude` list below exists to
+# make that assumption explicit and checkable, not to filter anything at read time.
+classes:
+  good: normal
+  exc_solder: excess
+  poor_solder: insufficient
+  spike: spike
+
+# Placement-task labels (V1/Setup*, top view). `good` is listed here too: the same raw string means
+# a different thing under V1 than it does under V2/V2.1, so it must never be pooled across tasks —
+# see reports/data_audit.md section 7. `pcbi ingest` asserts that no row it emits carries an image
+# resolving to a viewpoint outside {V2, V2.1}; if one ever did, its label would need to appear here.
+exclude:
+  - good
+  - no_good
