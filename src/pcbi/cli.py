@@ -8,6 +8,7 @@ from pcbi import smoke as smoke_mod
 from pcbi.bench import env as env_mod
 from pcbi.data import audit as audit_mod
 from pcbi.data import ingest as ingest_mod
+from pcbi.data import qa_polygons as qa_polygons_mod
 from pcbi.data import show as show_mod
 
 app = typer.Typer(help="PCB solder-joint inspector.", no_args_is_help=True)
@@ -164,7 +165,7 @@ def ingest(
         ingest_mod.DEFAULT_TAXONOMY, help="Raw-label -> project-class mapping."
     ),
 ) -> None:
-    """Write one CSV row per joint-quality polygon, for Stage 1 training."""
+    """Write one CSV row per joint, merging double-defect joints per notes/s1_three_polygons.md."""
     if not root.is_dir():
         typer.echo(f"No such folder: {root}", err=True)
         raise typer.Exit(code=1)
@@ -173,19 +174,90 @@ def ingest(
         raise typer.Exit(code=1)
 
     try:
-        rows = ingest_mod.write_polygons_csv(root, out, taxonomy)
+        raw_rows, merged_rows = ingest_mod.write_polygons_csv(root, out, taxonomy)
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    images = {row["image_name"] for row in rows}
-    typer.echo(f"{len(images)} image(s), {len(rows)} polygon row(s)")
-    classes: dict[str, int] = {}
-    for row in rows:
-        classes[row["class"]] = classes.get(row["class"], 0) + 1
-    for class_name, count in sorted(classes.items(), key=lambda kv: -kv[1]):
+    def class_counts(rows: list[dict]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for row in rows:
+            counts[row["class"]] = counts.get(row["class"], 0) + 1
+        return counts
+
+    raw_images = {row["image_name"] for row in raw_rows}
+    merged_images = {row["image_name"] for row in merged_rows}
+    merged_count = sum(1 for row in merged_rows if row["merged_from"])
+
+    typer.echo(f"before merge: {len(raw_images)} image(s), {len(raw_rows)} polygon row(s)")
+    for class_name, count in sorted(class_counts(raw_rows).items(), key=lambda kv: -kv[1]):
         typer.echo(f"  {class_name}: {count}")
+
+    typer.echo(
+        f"after merge (notes/s1_three_polygons.md): {len(merged_images)} image(s), "
+        f"{len(merged_rows)} joint row(s) — {merged_count} merged"
+    )
+    for class_name, count in sorted(class_counts(merged_rows).items(), key=lambda kv: -kv[1]):
+        typer.echo(f"  {class_name}: {count}")
+
     typer.echo(f"wrote {out}")
+
+
+@app.command(name="qa-polygons")
+def qa_polygons(
+    root: Path = typer.Option(Path("data/raw"), help="Folder holding the unzipped dataset."),
+    out_dir: Path = typer.Option(
+        Path("reports/qa"), help="Where to write the overlay sheets and bbox_stats.csv."
+    ),
+    taxonomy: Path = typer.Option(
+        ingest_mod.DEFAULT_TAXONOMY, help="Raw-label -> project-class mapping."
+    ),
+    seed: int = typer.Option(
+        qa_polygons_mod.SAMPLE_SEED, help="Seed for the random 12-image sample."
+    ),
+    image: str | None = typer.Option(
+        None,
+        "--image",
+        help=(
+            "Render just this one joint-task image at full resolution instead of the "
+            "sample/3poly sheets. Accepts the dataset-relative path (as in polygons.csv, e.g. "
+            "SolDef_AI/Dataset/CS1/R0805/V2/WIN_...Pro.jpg) or a bare filename."
+        ),
+    ),
+) -> None:
+    """Draw polygon/bbox overlays for visual QA and write per-class/package bbox stats."""
+    if not root.is_dir():
+        typer.echo(f"No such folder: {root}", err=True)
+        raise typer.Exit(code=1)
+    if not taxonomy.is_file():
+        typer.echo(f"No such taxonomy file: {taxonomy}", err=True)
+        raise typer.Exit(code=1)
+
+    if image is not None:
+        try:
+            dataset_path, annotated = qa_polygons_mod.render_single(root, image, taxonomy)
+        except ValueError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{Path(dataset_path).stem}_annotated.png"
+        annotated.save(out_path)
+        typer.echo(f"{dataset_path}: wrote {out_path}")
+        return
+
+    try:
+        summary = qa_polygons_mod.write_qa_report(root, out_dir, taxonomy, seed=seed)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"{summary['sample_images']} image(s) in overlay_sample.png")
+    typer.echo(
+        f"{summary['three_poly_images']} three-polygon image(s) across "
+        f"{summary['three_poly_sheets']} sheet(s)"
+    )
+    typer.echo(f"{summary['bbox_stats_rows']} row(s) in bbox_stats.csv")
+    typer.echo(f"wrote to {out_dir}")
 
 
 @app.command()

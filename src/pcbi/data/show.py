@@ -52,7 +52,17 @@ def _font() -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def _thumbnail(path: Path) -> Image.Image:
+def _thumbnail_image(img: Image.Image, size: tuple[int, int] = THUMB_SIZE) -> Image.Image:
+    """Letterbox an already-loaded image onto a fixed-size canvas."""
+    rgb = img.convert("RGB")
+    rgb.thumbnail(size)
+    canvas = Image.new("RGB", size, color=BACKGROUND)
+    offset = ((size[0] - rgb.width) // 2, (size[1] - rgb.height) // 2)
+    canvas.paste(rgb, offset)
+    return canvas
+
+
+def _thumbnail(path: Path, size: tuple[int, int] = THUMB_SIZE) -> Image.Image:
     """One tile's image area: the photo, letterboxed onto a fixed-size canvas.
 
     A file that fails to decode becomes a visibly red tile with the error message on it, rather
@@ -61,18 +71,24 @@ def _thumbnail(path: Path) -> Image.Image:
     try:
         with Image.open(path) as img:
             img.load()
-            rgb = img.convert("RGB")
+            return _thumbnail_image(img, size)
     except Exception as exc:  # noqa: BLE001 - a bad file must not abort the whole grid
-        canvas = Image.new("RGB", THUMB_SIZE, color=ERROR_COLOR)
+        canvas = Image.new("RGB", size, color=ERROR_COLOR)
         draw = ImageDraw.Draw(canvas)
         draw.text((4, 4), f"unreadable:\n{exc}", fill=TEXT_COLOR, font=_font())
         return canvas
 
-    rgb.thumbnail(THUMB_SIZE)
-    canvas = Image.new("RGB", THUMB_SIZE, color=BACKGROUND)
-    offset = ((THUMB_SIZE[0] - rgb.width) // 2, (THUMB_SIZE[1] - rgb.height) // 2)
-    canvas.paste(rgb, offset)
-    return canvas
+
+def tile_from_image(
+    img: Image.Image, caption: str, size: tuple[int, int] = THUMB_SIZE
+) -> Image.Image:
+    """A labeled grid tile built from an already-loaded image — e.g. one qa-polygons annotated."""
+    thumb = _thumbnail_image(img, size)
+    tile = Image.new("RGB", (size[0], size[1] + LABEL_HEIGHT), color=BACKGROUND)
+    tile.paste(thumb, (0, 0))
+    draw = ImageDraw.Draw(tile)
+    draw.text((4, size[1] + 2), caption[:42], fill=TEXT_COLOR, font=_font())
+    return tile
 
 
 def _tile(image_path: Path, caption: str) -> Image.Image:
@@ -84,16 +100,8 @@ def _tile(image_path: Path, caption: str) -> Image.Image:
     return tile
 
 
-def build_grid(
-    image_paths: list[Path],
-    captions: list[str] | None = None,
-    columns: int = MAX_COLUMNS,
-) -> Image.Image:
-    """Lay thumbnails out left to right, top to bottom, each labeled with its filename."""
-    if captions is None:
-        captions = [p.name for p in image_paths]
-    tiles = [_tile(path, caption) for path, caption in zip(image_paths, captions, strict=True)]
-
+def compose_grid(tiles: list[Image.Image], columns: int = MAX_COLUMNS) -> Image.Image:
+    """Lay already-built tiles out left to right, top to bottom."""
     if not tiles:
         canvas = Image.new("RGB", (420, 60), color=BACKGROUND)
         draw = ImageDraw.Draw(canvas)
@@ -114,6 +122,18 @@ def build_grid(
         y = PADDING + row * (tile_h + PADDING)
         canvas.paste(tile, (x, y))
     return canvas
+
+
+def build_grid(
+    image_paths: list[Path],
+    captions: list[str] | None = None,
+    columns: int = MAX_COLUMNS,
+) -> Image.Image:
+    """Lay thumbnails out left to right, top to bottom, each labeled with its filename."""
+    if captions is None:
+        captions = [p.name for p in image_paths]
+    tiles = [_tile(path, caption) for path, caption in zip(image_paths, captions, strict=True)]
+    return compose_grid(tiles, columns)
 
 
 def build_pair_grid(
