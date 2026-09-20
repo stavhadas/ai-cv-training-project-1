@@ -297,12 +297,16 @@ def test_reduce_joint_cluster_applies_precedence_between_different_classes():
     assert result["merged_from"] == "spike+excess"
 
 
-def test_reduce_joint_cluster_keeps_the_larger_same_class_duplicate():
-    small = {"class": "normal", "points": square(20, 10)}  # area 400
-    large = {"class": "normal", "points": square(20, 15)}  # area 900
+def test_reduce_joint_cluster_keeps_exactly_one_same_class_duplicate():
+    """Which one is kept is random by design, so assert the invariant, not the winner."""
+    small = {"class": "normal", "points": square(20, 10)}
+    large = {"class": "normal", "points": square(20, 15)}
     result = ingest_mod.reduce_joint_cluster([small, large])
-    assert result["points"] == large["points"]
+    assert result["class"] == "normal"
     assert result["merged_from"] == "normal+normal"
+    # Whichever survived, the crop box still spans both polygons.
+    xs = [p[0] for p in result["points"]]
+    assert (min(xs), max(xs)) == (5, 35)
 
 
 def test_reduce_joint_cluster_points_are_the_union_bounding_box():
@@ -317,7 +321,7 @@ def test_reduce_joint_cluster_points_are_the_union_bounding_box():
 def test_merge_double_defect_joints_matches_the_documented_pattern(three_poly_dataset, taxonomy):
     result = audit_mod.audit(three_poly_dataset)
     raw_rows = ingest_mod.ingest_rows(result, taxonomy)
-    merged_rows, reviews = ingest_mod.merge_double_defect_joints(raw_rows)
+    merged_rows = ingest_mod.merge_double_defect_joints(raw_rows)
 
     by_image: dict[str, list[dict]] = {}
     for row in merged_rows:
@@ -331,17 +335,15 @@ def test_merge_double_defect_joints_matches_the_documented_pattern(three_poly_da
     untouched = next(r for r in merge_a if not r["merged_from"])
     assert untouched["class"] == "insufficient"
 
-    # merge_a's spike+excess pair fits the documented pattern -> not flagged for review.
-    assert not any("merge_a.jpg" in note for note in reviews)
 
-
-def test_merge_double_defect_joints_flags_same_class_merges_for_review(
-    three_poly_dataset, taxonomy
-):
+def test_merge_double_defect_joints_handles_same_class_pairs(three_poly_dataset, taxonomy):
+    """merge_b's two `normal` polygons on one joint collapse to one, with no review needed."""
     result = audit_mod.audit(three_poly_dataset)
     raw_rows = ingest_mod.ingest_rows(result, taxonomy)
-    _, reviews = ingest_mod.merge_double_defect_joints(raw_rows)
-    assert any("merge_b.jpg" in note and "normal+normal" in note for note in reviews)
+    merged_rows = ingest_mod.merge_double_defect_joints(raw_rows)
+    merge_b = [r for r in merged_rows if r["image_name"] == "merge_b.jpg"]
+    assert len(merge_b) == 2
+    assert any(r["merged_from"] == "normal+normal" for r in merge_b)
 
 
 def test_merge_double_defect_joints_leaves_already_separate_joints_alone(
@@ -349,7 +351,7 @@ def test_merge_double_defect_joints_leaves_already_separate_joints_alone(
 ):
     result = audit_mod.audit(three_poly_dataset)
     raw_rows = ingest_mod.ingest_rows(result, taxonomy)
-    merged_rows, _ = ingest_mod.merge_double_defect_joints(raw_rows)
+    merged_rows = ingest_mod.merge_double_defect_joints(raw_rows)
     merge_c = [r for r in merged_rows if r["image_name"] == "merge_c.jpg"]
     assert len(merge_c) == 2
     assert all(r["merged_from"] == "" for r in merge_c)
@@ -358,7 +360,7 @@ def test_merge_double_defect_joints_leaves_already_separate_joints_alone(
 def test_finalize_positions_assigns_left_and_right(three_poly_dataset, taxonomy):
     result = audit_mod.audit(three_poly_dataset)
     raw_rows = ingest_mod.ingest_rows(result, taxonomy)
-    merged_rows, _ = ingest_mod.merge_double_defect_joints(raw_rows)
+    merged_rows = ingest_mod.merge_double_defect_joints(raw_rows)
     merge_a = {r["class"]: r for r in merged_rows if r["image_name"] == "merge_a.jpg"}
     assert merge_a["spike"]["joint_position"] == "left"
     assert merge_a["insufficient"]["joint_position"] == "right"
@@ -367,10 +369,9 @@ def test_finalize_positions_assigns_left_and_right(three_poly_dataset, taxonomy)
 
 def test_write_polygons_csv_returns_raw_and_merged_rows(three_poly_dataset, tmp_path):
     out = tmp_path / "polygons.csv"
-    raw_rows, merged_rows, reviews = ingest_mod.write_polygons_csv(three_poly_dataset, out)
+    raw_rows, merged_rows = ingest_mod.write_polygons_csv(three_poly_dataset, out)
     assert len(raw_rows) == 8  # merge_a: 3, merge_b: 3, merge_c: 2 polygons
     assert len(merged_rows) == 6  # merge_a: 2, merge_b: 2, merge_c: 2 joints
-    assert len(reviews) == 1  # only merge_b's same-class merge is flagged
 
     with out.open(newline="", encoding="utf-8") as f:
         rows_written = list(csv.DictReader(f))
@@ -384,7 +385,6 @@ def test_cli_prints_before_and_after_class_counts(three_poly_dataset, tmp_path):
     assert result.exit_code == 0, result.output
     assert "before merge:" in result.output
     assert "after merge (notes/s1_three_polygons.md):" in result.output
-    assert "case(s) need manual review" in result.output
 
 
 REAL_ROOT = Path("data/raw")
@@ -413,7 +413,7 @@ def test_real_dataset_matches_the_audited_counts():
 def test_real_dataset_merge_matches_stage1_note():
     result = audit_mod.audit(REAL_ROOT)
     raw_rows = ingest_mod.ingest_rows(result, ingest_mod.load_taxonomy())
-    merged_rows, reviews = ingest_mod.merge_double_defect_joints(raw_rows)
+    merged_rows = ingest_mod.merge_double_defect_joints(raw_rows)
     assert len(merged_rows) == 400
     assert sum(1 for row in merged_rows if row["merged_from"]) == 43
     assert Counter(row["class"] for row in merged_rows) == {
@@ -422,7 +422,7 @@ def test_real_dataset_merge_matches_stage1_note():
         "normal": 65,
         "insufficient": 57,
     }
-    # The two known exceptions to "always spike + a different class".
-    assert len(reviews) == 2
-    assert any("WIN_20220330_13_18_32_Pro.jpg" in note for note in reviews)
-    assert any("WIN_20220330_16_07_40_Pro.jpg" in note for note in reviews)
+    # The two cases outside "always spike + a different class" still merge, by the same rule.
+    merged_from = Counter(row["merged_from"] for row in merged_rows if row["merged_from"])
+    assert merged_from["insufficient+normal"] == 1
+    assert merged_from["spike+spike"] == 1
