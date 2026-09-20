@@ -12,6 +12,7 @@ from pcbi.data import group_report as group_report_mod
 from pcbi.data import ingest as ingest_mod
 from pcbi.data import qa_polygons as qa_polygons_mod
 from pcbi.data import show as show_mod
+from pcbi.data import split as split_mod
 from pcbi.data import tag as tag_mod
 from pcbi.data import tag_server as tag_server_mod
 
@@ -399,6 +400,169 @@ def tag(
         typer.echo("\nstopped.")
     finally:
         server.server_close()
+
+
+@app.command()
+def split(
+    groups: Path = typer.Option(
+        split_mod.DEFAULT_GROUPS, help="Chosen groups CSV, from `pcbi group` or the manual tagger."
+    ),
+    polygons: Path = typer.Option(
+        split_mod.DEFAULT_POLYGONS,
+        help="Joint-level CSV from `pcbi ingest`; supplies the class labels.",
+    ),
+    out: Path = typer.Option(split_mod.DEFAULT_OUT, help="Where to write the frozen split."),
+    meta_out: Path = typer.Option(
+        split_mod.DEFAULT_META, help="Where to write the split's hash and provenance."
+    ),
+    audit_out: Path = typer.Option(
+        split_mod.DEFAULT_AUDIT,
+        help="Data-audit report to append the count table to; the section is replaced on re-run.",
+    ),
+    ratios: tuple[float, float, float] = typer.Option(
+        split_mod.DEFAULT_RATIOS,
+        help="train val test fractions of the crops, as three numbers summing to 1.",
+    ),
+    candidates: int = typer.Option(
+        split_mod.DEFAULT_CANDIDATES, help="How many candidate splits to generate before choosing."
+    ),
+    split_seed: int = typer.Option(0, help="Base seed; candidate i uses split_seed + i."),
+    no_report: bool = typer.Option(
+        False, "--no-report", help="Skip the data-audit section; write only the split and metadata."
+    ),
+) -> None:
+    """Freeze a grouped, stratified train/val/test split and fingerprint it.
+
+    Every crop of a group lands in one split, so two photographs of the same physical joint can
+    never straddle the train/test line. Candidates are judged on label counts alone — never on how
+    a model scores — because a test set chosen to flatter a model is not a test set.
+    """
+    if candidates < 1:
+        typer.echo("--candidates must be at least 1.", err=True)
+        raise typer.Exit(code=2)
+    try:
+        split_mod.fold_counts(ratios)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if not groups.is_file():
+        typer.echo(f"No such groups file: {groups}", err=True)
+        typer.echo("Run `pcbi group` first, or point --groups at an existing grouping.", err=True)
+        raise typer.Exit(code=1)
+    if not polygons.is_file():
+        typer.echo(f"No such polygons file: {polygons}", err=True)
+        typer.echo("Run `pcbi ingest` first.", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        crops, choice, hash_hex, meta = split_mod.write_splits_csv(
+            groups, polygons, out, ratios, candidates, split_seed, meta_out
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    total_groups = len({crop.group_id for crop in crops})
+    typer.echo(f"{total_groups} group(s), {len(crops)} crop(s) from {groups}")
+    rejected = choice.considered - choice.accepted
+    tally = ", ".join(f"{name} {count}" for name, count in sorted(choice.rejections.items()))
+    typer.echo(
+        f"  candidate {choice.index + 1} of {choice.considered} (seed {choice.seed}); "
+        f"{choice.accepted} passed the gates, {rejected} rejected"
+        + (f" — {tally}" if tally else "")
+    )
+
+    headers, rows = split_mod.count_table(crops, choice.assignment)
+    table = [[str(cell) for cell in row] for row in [headers, *rows]]
+    widths = [max(len(row[index]) for row in table) for index in range(len(headers))]
+    typer.echo("")
+    for row in table:
+        typer.echo("  " + "  ".join(c.rjust(w) for c, w in zip(row, widths, strict=True)))
+    typer.echo("")
+
+    # What the gates passed by, not just that they passed: "all clear" hides whether the scarcest
+    # class made it by one crop or by thirty.
+    tightest = meta["gates"]["margins"][0]
+    typer.echo(
+        f"  tightest gate margin: {tightest['what']} at {tightest['count']} "
+        f"(floor {tightest['floor']}, {tightest['slack']:+d})"
+    )
+    typer.echo(f"  split hash: {hash_hex}")
+    typer.echo(f"wrote {out}")
+    typer.echo(f"wrote {meta_out}")
+
+    if no_report:
+        return
+    command = (
+        f"pcbi split --groups {groups.as_posix()} --ratios {split_mod.format_ratios(ratios)} "
+        f"--candidates {candidates} --split-seed {split_seed}"
+    )
+    section = split_mod.render_audit_section(crops, choice, meta, command)
+    try:
+        replaced = split_mod.update_audit_report(audit_out, section)
+    except ValueError as exc:
+        # The split itself is written and valid; only the write-up is missing. Say so and stop
+        # short of failing a command whose real artifact already landed.
+        typer.echo(f"  {exc}", err=True)
+        return
+    typer.echo(f"{'replaced' if replaced else 'appended'} the split section in {audit_out}")
+
+
+@app.command(name="qa-polygons")
+def qa_polygons(
+    root: Path = typer.Option(Path("data/raw"), help="Folder holding the unzipped dataset."),
+    out_dir: Path = typer.Option(
+        Path("reports/qa"), help="Where to write the overlay sheets and bbox_stats.csv."
+    ),
+    taxonomy: Path = typer.Option(
+        ingest_mod.DEFAULT_TAXONOMY, help="Raw-label -> project-class mapping."
+    ),
+    seed: int = typer.Option(
+        qa_polygons_mod.SAMPLE_SEED, help="Seed for the random 12-image sample."
+    ),
+    image: str | None = typer.Option(
+        None,
+        "--image",
+        help=(
+            "Render just this one joint-task image at full resolution instead of the "
+            "sample/3poly sheets. Accepts the dataset-relative path (as in polygons.csv, e.g. "
+            "SolDef_AI/Dataset/CS1/R0805/V2/WIN_...Pro.jpg) or a bare filename."
+        ),
+    ),
+) -> None:
+    """Draw polygon/bbox overlays for visual QA and write per-class/package bbox stats."""
+    if not root.is_dir():
+        typer.echo(f"No such folder: {root}", err=True)
+        raise typer.Exit(code=1)
+    if not taxonomy.is_file():
+        typer.echo(f"No such taxonomy file: {taxonomy}", err=True)
+        raise typer.Exit(code=1)
+
+    if image is not None:
+        try:
+            dataset_path, annotated = qa_polygons_mod.render_single(root, image, taxonomy)
+        except ValueError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{Path(dataset_path).stem}_annotated.png"
+        annotated.save(out_path)
+        typer.echo(f"{dataset_path}: wrote {out_path}")
+        return
+
+    try:
+        summary = qa_polygons_mod.write_qa_report(root, out_dir, taxonomy, seed=seed)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"{summary['sample_images']} image(s) in overlay_sample.png")
+    typer.echo(
+        f"{summary['three_poly_images']} three-polygon image(s) across "
+        f"{summary['three_poly_sheets']} sheet(s)"
+    )
+    typer.echo(f"{summary['bbox_stats_rows']} row(s) in bbox_stats.csv")
+    typer.echo(f"wrote to {out_dir}")
 
 
 @app.command()

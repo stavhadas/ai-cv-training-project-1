@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "generated": "2026-09-20T10:32:27Z",
+  "split_hash": "7925ce616931ad52c69a46e94b69e113fc9713d4bb15c5f9163ba0354e4c8b0c",
+  "splits_csv": "data/splits/split_v1.csv",
+  "inputs": {
+    "groups_csv": "data/interim/groups_manual.csv",
+    "polygons_csv": "data/interim/polygons.csv",
+    "crops": 400,
+    "groups": 130
+  },
+  "search": {
+    "ratios": [
+      0.6,
+      0.2,
+      0.2
+    ],
+    "n_splits": 5,
+    "folds": {
+      "train": 3,
+      "val": 1,
+      "test": 1
+    },
+    "candidates": 200,
+    "split_seed": 0,
+    "chosen_index": 5,
+    "chosen_seed": 5,
+    "accepted": 200,
+    "rejections": {},
+    "deviation": {
+      "class_mix": 0.030926419348227097,
+      "size": 0.009999999999999981
+    }
+  },
+  "gates": {
+    "min_normal_in_val_and_test": 12,
+    "min_defect_in_val_and_test": 8,
+    "margins": [
+      {
+        "what": "val normal",
+        "count": 13,
+        "floor": 12,
+        "slack": 1
+      },
+      {
+        "what": "test normal",
+        "count": 13,
+        "floor": 12,
+        "slack": 1
+      },
+      {
+        "what": "test insufficient",
+        "count": 11,
+        "floor": 8,
+        "slack": 3
+      },
+      {
+        "what": "val insufficient",
+        "count": 12,
+        "floor": 8,
+        "slack": 4
+      },
+      {
+        "what": "test spike",
+        "count": 24,
+        "floor": 8,
+        "slack": 16
+      },
+      {
+        "what": "val spike",
+        "count": 25,
+        "floor": 8,
+        "slack": 17
+      },
+      {
+        "what": "val excess",
+        "count": 32,
+        "floor": 8,
+        "slack": 24
+      },
+      {
+        "what": "test excess",
+        "count": 32,
+        "floor": 8,
+        "slack": 24
+      }
+    ]
+  },
+  "counts": {
+    "train": {
+      "groups": 79,
+      "crops": 238,
+      "excess": 93,
+      "spike": 72,
+      "normal": 39,
+      "insufficient": 34
+    },
+    "val": {
+      "groups": 26,
+      "crops": 82,
+      "excess": 32,
+      "spike": 25,
+      "normal": 13,
+      "insufficient": 12
+    },
+    "test": {
+      "groups": 25,
+      "crops": 80,
+      "excess": 32,
+      "spike": 24,
+      "normal": 13,
+      "insufficient": 11
+    },
+    "total": {
+      "groups": 130,
+      "crops": 400,
+      "excess": 157,
+      "spike": 121,
+      "normal": 65,
+      "insufficient": 57
+    }
+  }
+}

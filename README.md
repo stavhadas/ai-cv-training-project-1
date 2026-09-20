@@ -48,7 +48,9 @@ results from wherever a run happened. Notebooks are launchers only.
 
 Dependencies are intentionally minimal. `wandb` is here because Stage 0 logs to it; `imagehash`,
 `torch` and `timm` arrive in Stage 1 for `pcbi group`, which compares images to guess which ones
-show the same physical component. `torch` is pinned to the **CPU-only** wheels (see
+show the same physical component, and `scikit-learn` for `pcbi split`, whose `StratifiedGroupKFold`
+keeps every photograph of one component on the same side of the train/test line. `torch` is pinned
+to the **CPU-only** wheels (see
 `[[tool.uv.index]]` in `pyproject.toml`) so CI doesn't pull ~3GB of CUDA libraries on every push —
 Stage 2's Kaggle GPU training will need its own torch handling.
 
@@ -120,3 +122,26 @@ Tooling: `torch 2.10.0+cu128` · `timm 1.0.26` · 2 GPUs visible.
 - [x] Step 5 — laptop hardware profile
 - [x] Step 6 — interpret the audit, fill the metadata table
 - [x] Step 7 — record the compute setup
+
+## Stage 1 progress
+
+- [x] Step 1 — `pcbi ingest`, one CSV row per solder joint
+- [x] Step 4 — `pcbi group`, candidate groupings of "same physical component"
+- [x] Step 4b — the manual tagger, after every automatic method fell short
+- [x] Step 5 — `pcbi split`, the frozen train/val/test partition
+
+The split is frozen and fingerprinted. Regenerate it with:
+
+```bash
+uv run pcbi split --groups data/interim/groups_manual.csv \
+                  --ratios 0.6 0.2 0.2 --candidates 200 --split-seed 0
+```
+
+It writes three things: the assignment to `data/splits/split_v1.csv`, its hash and provenance to
+`data/manifest_meta.json`, and a count table into section 13 of `reports/data_audit.md` (replaced
+in place on re-run). All three are committed — a split that lives only on the laptop that made it
+is not frozen, and Kaggle clones this repo to train.
+
+Every training run records the **split hash**, a SHA-256 of the sorted `(crop ID, split)` pairs.
+Two runs reporting different hashes did not train on the same data. The hash covers the pairs
+alone, not the manifest, so adding a column to the CSV leaves it unchanged.

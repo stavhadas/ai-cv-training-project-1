@@ -450,3 +450,37 @@ Viewed 3 cells, 22 images total, including 2 separate `V2`/`V2.1` pair sets (sat
 
 **Stage 1 addendum:** the direction itself stayed unresolved here, but Stage 1's `pcbi ingest` needs *some* label to distinguish the two folders in `light_direction`, so it adopts a working assumption — `V2` = `bottom_to_top`, `V2.1` = `top_to_bottom` (`src/pcbi/data/ingest.py`, `LIGHT_DIRECTION_BY_VIEWPOINT`) — rather than leaving the column blank. This is an assumed convention, not a re-measurement; it should be corrected in that one place if it's ever checked against the physical bench setup.
 
+<!-- pcbi split: begin -->
+## 13. Frozen train/val/test split
+
+Written by `pcbi split --groups data/interim/groups_manual.csv --ratios 0.6 0.2 0.2 --candidates 200 --split-seed 0` on 2026-09-20 10:32:27 UTC.
+Re-running that command replaces this section in place. `pcbi audit` rewrites the whole report and drops it, so regenerate the split afterwards if you want it back.
+
+The split is **grouped**: all 400 crops sit in 130 groups, and no group spans two splits — so no physical joint appears in both train and test. It is **stratified only approximately**: 130 groups is few, and a group carrying two `normal` crops moves several percent of the scarcest class at once. That is why the counts are printed here rather than assumed.
+
+- **Split file:** `data/splits/split_v1.csv`
+- **Manifest metadata:** `data/manifest_meta.json`
+- **Grouping:** `data/interim/groups_manual.csv`
+- **Labels:** `data/interim/polygons.csv`
+- **Ratios:** 0.6 0.2 0.2 (5 folds, dealt 3/1/1)
+- **Split hash:** `7925ce616931ad52c69a46e94b69e113fc9713d4bb15c5f9163ba0354e4c8b0c`
+
+| Split | Groups | Crops | `excess` | `spike` | `normal` | `insufficient` |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| train | 79 | 238 | 93 | 72 | 39 | 34 |
+| val | 26 | 82 | 32 | 25 | 13 | 12 |
+| test | 25 | 80 | 32 | 24 | 13 | 11 |
+| **total** | **130** | **400** | **157** | **121** | **65** | **57** |
+
+Candidate 6 of 200 (seed 5) won, chosen on label counts alone — closest to the overall class mix among the 200 that passed every gate. **No model result entered this choice**, because a test set picked to flatter a model is not a test set.
+
+The gates, all on counts:
+
+- **G1** — no group ID appears in more than one split.
+- **G2** — val and test each hold at least 12 `normal` crops.
+- **G3** — val and test each hold at least 8 crops of every defect class.
+
+Tightest margin: **val normal at 13 against a floor of 12** (+1). A future regrouping that narrows this further is a signal to widen the gates deliberately, not to lower them quietly.
+
+**Every training run records the split hash.** Two runs reporting different hashes did not train on the same data. The hash covers the sorted (crop ID, split) pairs only — not the manifest — so adding a column to the CSV leaves it unchanged, and a crop moving between splits changes it.
+<!-- pcbi split: end -->

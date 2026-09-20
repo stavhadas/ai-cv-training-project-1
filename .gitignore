@@ -9,10 +9,19 @@
 # Git will not look inside an excluded directory, so re-including one file means excluding and
 # re-including each level down to it by hand. `/data/*` rather than `/data/` is what makes that
 # possible at all.
+#
+# ...and the frozen split, for a related reason. A split whose entire purpose is that every run
+# uses the same one cannot live only on the laptop that generated it — Kaggle clones this repo to
+# train. `manifest_meta.json` rides along because the split hash it records is what a run logs to
+# prove which split it used. Both are small; the crops they point at are not tracked.
 /data/*
 !/data/interim/
 /data/interim/*
 !/data/interim/tag_pairs.json
+!/data/splits/
+/data/splits/*
+!/data/splits/*.csv
+!/data/manifest_meta.json
 
 # Secrets
 .env
