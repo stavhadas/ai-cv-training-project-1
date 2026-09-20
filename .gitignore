@@ -1,6 +1,18 @@
 # Data — never tracked; fetched from Kaggle.
 # Leading slash anchors this to the repo root, so it does not also swallow src/pcbi/data/.
-/data/
+#
+# ...except the manual pairing. It is hours of a person deciding which two photographs show the
+# same physical component, it cannot be regenerated from anything (no automatic method could
+# reproduce it — see reports/grouping_*.md), and it is a few KB of readable JSON. Everything else
+# under data/ can be re-derived from the download; this cannot.
+#
+# Git will not look inside an excluded directory, so re-including one file means excluding and
+# re-including each level down to it by hand. `/data/*` rather than `/data/` is what makes that
+# possible at all.
+/data/*
+!/data/interim/
+/data/interim/*
+!/data/interim/tag_pairs.json
 
 # Secrets
 .env

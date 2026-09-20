@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>pcbi tag — manual pairing</title>
+<style>
+  :root {
+    --bg: #181818; --panel: #232323; --line: #383838;
+    --text: #e6e6e6; --dim: #9a9a9a; --accent: #f5c542; --ok: #5ac85a; --warn: #e07a4a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.45 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  }
+  header { position: sticky; top: 0; z-index: 20; background: var(--panel);
+           border-bottom: 1px solid var(--line); padding: 10px 16px; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .02em; }
+  .paths { color: var(--dim); font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+  .bar { flex: 1; min-width: 180px; height: 8px; background: #111; border-radius: 4px;
+         overflow: hidden; }
+  .bar > div { height: 100%; background: var(--ok); width: 0; transition: width .2s; }
+  .counts { font-variant-numeric: tabular-nums; color: var(--dim); }
+  .counts b { color: var(--text); }
+
+  nav { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  nav button { background: #1c1c1c; color: var(--dim); border: 1px solid var(--line);
+               border-radius: 5px; padding: 4px 9px; cursor: pointer; font: inherit; }
+  nav button:hover { border-color: #555; color: var(--text); }
+  nav button.on { background: var(--accent); border-color: var(--accent); color: #1a1a1a;
+                  font-weight: 600; }
+  nav button.done { border-color: var(--ok); color: var(--ok); }
+  nav button.none { opacity: .45; }
+  nav .tally { font-variant-numeric: tabular-nums; opacity: .8; margin-left: 4px; }
+
+  .tools { margin-top: 10px; gap: 10px; }
+  .tools button, .tools select, .tools label {
+    background: #1c1c1c; color: var(--text); border: 1px solid var(--line);
+    border-radius: 5px; padding: 4px 9px; cursor: pointer; font: inherit;
+  }
+  .tools label { display: inline-flex; align-items: center; gap: 6px; }
+  .tools button:hover { border-color: #666; }
+  .tools button:disabled { opacity: .4; cursor: default; border-color: var(--line); }
+  .tools code { font-family: ui-monospace, Consolas, monospace; }
+  .tools button.danger:hover { border-color: var(--warn); color: var(--warn); }
+  .tip { margin-top: 7px; }
+  .tip b { color: var(--text); }
+  #status { color: var(--dim); min-height: 18px; }
+  #status b { color: var(--accent); }
+  #status .note { color: var(--warn); }
+
+  main { padding: 14px 16px 60px; }
+  .columns { display: flex; gap: 14px; align-items: flex-start; }
+  .column { flex: 1; min-width: 0; }
+  .column h2 { font-size: 12px; color: var(--dim); font-weight: 600; margin: 0 0 8px;
+               text-transform: uppercase; letter-spacing: .06em; }
+  .grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+
+  .tile { background: var(--panel); border: 2px solid transparent; border-radius: 7px;
+          overflow: hidden; cursor: pointer; position: relative; }
+  /* `contain`, never `cover`: cropping a tile to fit could cut off the silkscreen designator
+     beside the part, which is the surest thing to pair on. */
+  .tile img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: contain;
+              background: #111; }
+  .tile .cap { padding: 4px 6px; font-family: ui-monospace, Consolas, monospace; font-size: 11px;
+               display: flex; justify-content: space-between; gap: 6px; align-items: center; }
+  .tile .cap span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile .partner { color: var(--dim); font-size: 10px; padding: 0 6px 4px; height: 14px;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile .badge { display: none; position: absolute; top: 6px; left: 6px; padding: 1px 7px;
+                 border-radius: 10px; font-weight: 700; font-size: 11px; color: #141414; }
+  .tile .zoom { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px;
+                border: none; border-radius: 5px; background: rgba(0,0,0,.6); color: #fff;
+                cursor: pointer; font-size: 12px; line-height: 22px; padding: 0; opacity: 0; }
+  .tile:hover .zoom { opacity: 1; }
+  .tile.paired .badge { display: block; }
+  .tile.paired img { opacity: .72; }
+  .tile.selected { border-color: var(--accent); }
+  .tile.selected img { opacity: 1; }
+  .tile.mate { border-color: #fff; }
+  .tile.hidden { display: none; }
+  .empty { color: var(--dim); padding: 30px 6px; }
+
+  #zoom { position: fixed; inset: 0; background: rgba(0,0,0,.92); z-index: 50;
+          display: none; align-items: center; justify-content: center; gap: 10px; padding: 16px; }
+  #zoom.on { display: flex; }
+  #zoom figure { margin: 0; max-height: 100%; display: flex; flex-direction: column; min-width: 0; }
+  #zoom img { max-width: 100%; max-height: calc(100vh - 70px); object-fit: contain; }
+  #zoom figcaption { color: var(--dim); font-family: ui-monospace, Consolas, monospace;
+                     font-size: 11px; padding-top: 6px; }
+  kbd { background: #111; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px;
+        font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>pcbi tag</h1>
+    <div class="bar"><div id="progress"></div></div>
+    <div class="counts" id="counts"></div>
+    <div class="paths" id="paths"></div>
+  </div>
+  <nav id="cells"></nav>
+  <div class="row tools">
+    <label>view
+      <select id="tolerance"></select>
+    </label>
+    <label><input type="checkbox" id="hide"> hide paired</label>
+    <button id="hint" title="Pair images whose filenames carry the same _C## component number.
+Recorded evidence, not a guess — nothing to verify.">pair by <code>_C##</code> tag</button>
+    <button id="guess" title="Pair the nth photo in each column, for slots that are still empty.
+A guess from capture order — it matched none of the four known pairs, so check every one.">guess by capture order</button>
+    <button id="clear" class="danger">clear this cell</button>
+    <div id="status"></div>
+  </div>
+  <div class="row tip">
+    <div class="paths">tip: the silkscreen designator beside the part (<b>R1</b>, <b>R4</b>&hellip;)
+      is printed component identity — read it rather than matching solder shapes. Press
+      <kbd>z</kbd> with one image selected to see both side by side.</div>
+  </div>
+</header>
+
+<main><div class="columns" id="board"></div></main>
+
+<div id="zoom"></div>
+
+<script>
+"use strict";
+
+const state = {
+  manifest: null,
+  groups: [],
+  byPath: new Map(),      // dataset path -> group index
+  selected: null,         // dataset path
+  cell: 0,
+  tolerance: null,
+  hidePaired: false,
+};
+const tiles = new Map();  // dataset path -> tile element, for the cell currently drawn
+let drawnKey = "";        // cell + tolerance the tiles were built for
+
+const $ = (id) => document.getElementById(id);
+const cell = () => state.manifest.cells[state.cell];
+const image = (index) => state.manifest.images[index];
+const colour = (n) => `hsl(${(n * 137.508) % 360} 72% 62%)`;
+
+async function api(path, body) {
+  const response = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || response.statusText);
+  return payload;
+}
+
+function absorb(payload) {
+  state.groups = payload.groups;
+  state.byPath = new Map();
+  state.groups.forEach((group, index) => group.forEach((path) => state.byPath.set(path, index)));
+  const s = payload.summary;
+  $("progress").style.width = `${Math.min(100, s.percent)}%`;
+  $("counts").innerHTML =
+    `<b>${s.groups}</b> groups &middot; <b>${s.tagged}</b>/${s.pairable} pairable images tagged ` +
+    `&middot; ${s.untagged} untagged` +
+    (s.unknown ? ` &middot; <span style="color:var(--warn)">${s.unknown} saved path(s) not found</span>` : "");
+  paint();
+}
+
+// --- drawing ---------------------------------------------------------------------------------
+
+function tileFor(index) {
+  const img = image(index);
+  const node = document.createElement("div");
+  node.className = "tile";
+  node.innerHTML =
+    `<img loading="lazy" src="/img/${index}?t=${state.tolerance}" alt="">` +
+    `<span class="badge"></span>` +
+    `<button class="zoom" title="Look closer (z)">&#9974;</button>` +
+    `<div class="cap"><span>${img.label}</span></div>` +
+    `<div class="partner"></div>`;
+  node.onclick = (event) => {
+    if (event.target.closest(".zoom")) { openZoom(index); return; }
+    pick(img.path);
+  };
+  return node;
+}
+
+function draw() {
+  const key = `${state.cell}|${state.tolerance}`;
+  if (key === drawnKey) return;
+  drawnKey = key;
+  tiles.clear();
+
+  const board = $("board");
+  board.innerHTML = "";
+  const current = cell();
+  for (const column of current.columns) {
+    const node = document.createElement("div");
+    node.className = "column";
+    node.innerHTML = `<h2>${column.viewpoint} &middot; ${column.images.length} images</h2>`;
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    for (const index of column.images) {
+      const tile = tileFor(index);
+      tiles.set(image(index).path, tile);
+      grid.append(tile);
+    }
+    node.append(grid);
+    board.append(node);
+  }
+  if (current.columns.length < 2) {
+    board.insertAdjacentHTML("beforeend",
+      `<div class="empty">Only one viewpoint was photographed in this cell, so nothing here
+       can have a twin. Its ${current.size || ""} images stay untagged.</div>`);
+  }
+}
+
+function paint() {
+  draw();
+  const numbers = new Map();   // group index -> per-cell ordinal, so badges read 1, 2, 3...
+  const selectedGroup = state.selected != null ? state.byPath.get(state.selected) : undefined;
+
+  for (const [path, tile] of tiles) {
+    const groupIndex = state.byPath.get(path);
+    const paired = groupIndex !== undefined;
+    if (paired && !numbers.has(groupIndex)) numbers.set(groupIndex, numbers.size + 1);
+
+    tile.classList.toggle("paired", paired);
+    tile.classList.toggle("selected", path === state.selected);
+    tile.classList.toggle("mate", paired && groupIndex === selectedGroup && path !== state.selected);
+    tile.classList.toggle("hidden", state.hidePaired && paired && path !== state.selected);
+
+    const badge = tile.querySelector(".badge");
+    const partner = tile.querySelector(".partner");
+    if (paired) {
+      badge.textContent = numbers.get(groupIndex);
+      badge.style.background = colour(groupIndex);
+      const others = state.groups[groupIndex].filter((other) => other !== path);
+      partner.textContent = "= " + others.map(labelOf).join(", ");
+    } else {
+      partner.textContent = "";
+    }
+  }
+  paintCells();
+  paintTools();
+  paintStatus();
+}
+
+function paintTools() {
+  const hinted = cell().hinted;
+  $("hint").disabled = !hinted;
+  $("hint").title = hinted
+    ? `${hinted} filename(s) here carry a _C## number. Recorded evidence — nothing to verify.`
+    : "No filename in this cell carries a _C## component number.";
+  $("guess").disabled = cell().columns.length < 2;
+}
+
+function labelOf(path) {
+  const img = state.manifest.images.find((candidate) => candidate.path === path);
+  return img ? img.label : path;
+}
+
+function paintCells() {
+  const nav = $("cells");
+  nav.innerHTML = "";
+  state.manifest.cells.forEach((entry, index) => {
+    const tagged = entry.columns
+      .flatMap((column) => column.images)
+      .filter((i) => state.byPath.has(image(i).path)).length;
+    const button = document.createElement("button");
+    button.className = index === state.cell ? "on"
+      : !entry.pairable ? "none"
+      : tagged >= entry.pairable ? "done" : "";
+    button.innerHTML = `${entry.name}<span class="tally">${tagged}/${entry.pairable}</span>`;
+    button.onclick = () => { state.cell = index; state.selected = null; paint(); };
+    nav.append(button);
+  });
+}
+
+function paintStatus(note) {
+  const status = $("status");
+  if (note) { status.innerHTML = `<span class="note">${note}</span>`; return; }
+  if (state.selected) {
+    const group = state.byPath.get(state.selected);
+    status.innerHTML = `selected <b>${labelOf(state.selected)}</b> — click its twin to pair` +
+      (group !== undefined ? `, or <kbd>u</kbd> to unpair` : "") + `, <kbd>esc</kbd> to drop it`;
+  } else {
+    status.innerHTML = `click an image, then click the same component in the other column`;
+  }
+}
+
+// --- actions ---------------------------------------------------------------------------------
+
+function viewpointOf(path) {
+  const img = state.manifest.images.find((candidate) => candidate.path === path);
+  return img ? img.viewpoint : "";
+}
+
+async function pick(path) {
+  if (state.selected === null) { state.selected = path; paint(); return; }
+  if (state.selected === path) { state.selected = null; paint(); return; }
+
+  const first = state.selected;
+  const sameColumn = viewpointOf(first) === viewpointOf(path);
+  state.selected = null;
+  absorb(await api("/api/link", { a: first, b: path }));
+  if (sameColumn) {
+    paintStatus(`paired two ${viewpointOf(path)} images — allowed, but unusual. Undo with <kbd>u</kbd>.`);
+  }
+}
+
+async function unpair() {
+  if (!state.selected || !state.byPath.has(state.selected)) return;
+  const path = state.selected;
+  state.selected = null;
+  absorb(await api("/api/unlink", { path }));
+}
+
+async function cellAction(endpoint, confirmation) {
+  if (confirmation && !window.confirm(confirmation)) return;
+  state.selected = null;
+  absorb(await api(endpoint, { cell: cell().name }));
+}
+
+function openZoom(index) {
+  const box = $("zoom");
+  const shown = [index];
+  // With something selected, show both side by side — telling two solder joints apart is a
+  // comparison, and flipping between two tabs loses the detail you were comparing.
+  if (state.selected && state.selected !== image(index).path) {
+    const other = state.manifest.images.find((candidate) => candidate.path === state.selected);
+    if (other) shown.unshift(other.index);
+  }
+  box.innerHTML = shown.map((i) =>
+    `<figure><img src="/img/${i}?zoom=1&t=${state.tolerance}" alt="">` +
+    `<figcaption>${image(i).viewpoint} &middot; ${image(i).name}</figcaption></figure>`).join("");
+  box.classList.add("on");
+}
+
+// --- wiring ----------------------------------------------------------------------------------
+
+$("zoom").onclick = () => $("zoom").classList.remove("on");
+$("hide").onchange = (event) => { state.hidePaired = event.target.checked; paint(); };
+$("tolerance").onchange = (event) => { state.tolerance = event.target.value; drawnKey = ""; paint(); };
+$("hint").onclick = () => cellAction("/api/hint", null);
+$("guess").onclick = () => cellAction("/api/guess",
+  `Pair the nth photo of each column in ${cell().name}, wherever both are still untagged.\n\n` +
+  "This assumes the two viewpoints were photographed in the same order, and that assumption is " +
+  "measurably wrong where it can be checked: in CS6/C0805 the V2.1 sweep was shot first, has half " +
+  "as many photos, and its four _C## pairs say this guess gets none of them right." +
+  (cell().balanced ? "" : "\n\nThis cell's two columns are different lengths, so they cannot " +
+   "line up by position at all — expect most of this to be wrong.") +
+  "\n\nUse it to fill the cell and then walk it correcting, not as an answer. Nothing already " +
+  "paired is touched. Continue?");
+$("clear").onclick = () => cellAction("/api/clear",
+  `Delete every pair made in ${cell().name}? Other cells keep theirs.`);
+
+document.onkeydown = (event) => {
+  if (event.target.matches("input, select, textarea")) return;
+  if (event.key === "Escape") {
+    if ($("zoom").classList.contains("on")) $("zoom").classList.remove("on");
+    else { state.selected = null; paint(); }
+  } else if (event.key === "u" || event.key === "Delete" || event.key === "Backspace") {
+    event.preventDefault();
+    unpair();
+  } else if (event.key === "z" && state.selected) {
+    const img = state.manifest.images.find((candidate) => candidate.path === state.selected);
+    if (img) openZoom(img.index);
+  } else if (event.key === "h") {
+    $("hide").checked = state.hidePaired = !state.hidePaired;
+    paint();
+  } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+    const step = event.key === "ArrowRight" ? 1 : -1;
+    const count = state.manifest.cells.length;
+    state.cell = (state.cell + step + count) % count;
+    state.selected = null;
+    paint();
+  }
+};
+
+(async function start() {
+  const manifest = await api("/api/state");
+  state.manifest = manifest;
+  state.tolerance = String(manifest.tolerance);
+  $("paths").textContent = `${manifest.out}  ·  ${manifest.pairs}`;
+  $("tolerance").innerHTML = manifest.tolerances
+    .map((entry) => `<option value="${entry.value}"${String(entry.value) === state.tolerance
+      ? " selected" : ""}>${entry.label}</option>`).join("");
+  absorb(manifest);
+  // Land on the first cell that still has work in it, so a resumed session opens where it stopped.
+  const next = manifest.cells.findIndex((entry) => {
+    const tagged = entry.columns.flatMap((column) => column.images)
+      .filter((i) => state.byPath.has(image(i).path)).length;
+    return entry.pairable > tagged;
+  });
+  if (next > 0) { state.cell = next; paint(); }
+})();
+</script>
+</body>
+</html>

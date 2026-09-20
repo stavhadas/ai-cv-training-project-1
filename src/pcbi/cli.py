@@ -12,6 +12,8 @@ from pcbi.data import group_report as group_report_mod
 from pcbi.data import ingest as ingest_mod
 from pcbi.data import qa_polygons as qa_polygons_mod
 from pcbi.data import show as show_mod
+from pcbi.data import tag as tag_mod
+from pcbi.data import tag_server as tag_server_mod
 
 app = typer.Typer(help="PCB solder-joint inspector.", no_args_is_help=True)
 
@@ -315,29 +317,42 @@ def group(
         typer.echo(f"wrote {report_out}")
 
 
-@app.command(name="qa-polygons")
-def qa_polygons(
+@app.command()
+def tag(
     root: Path = typer.Option(Path("data/raw"), help="Folder holding the unzipped dataset."),
-    out_dir: Path = typer.Option(
-        Path("reports/qa"), help="Where to write the overlay sheets and bbox_stats.csv."
+    pairs: Path = typer.Option(
+        tag_mod.DEFAULT_PAIRS, help="Where the pairing is read from and saved back to."
+    ),
+    out: Path = typer.Option(tag_mod.DEFAULT_OUT, help="Where to write the manual grouping CSV."),
+    crop_tolerance: float = typer.Option(
+        tag_mod.DEFAULT_TOLERANCE,
+        help=(
+            "How much board to show around the component while pairing, as a fraction of the "
+            "joint box's longer side. A viewing aid only — it changes nothing in the CSV."
+        ),
+    ),
+    full_frame: bool = typer.Option(
+        False, "--full-frame", help="Show the whole photo instead of a crop."
     ),
     taxonomy: Path = typer.Option(
         ingest_mod.DEFAULT_TAXONOMY, help="Raw-label -> project-class mapping."
     ),
-    seed: int = typer.Option(
-        qa_polygons_mod.SAMPLE_SEED, help="Seed for the random 12-image sample."
-    ),
-    image: str | None = typer.Option(
-        None,
-        "--image",
-        help=(
-            "Render just this one joint-task image at full resolution instead of the "
-            "sample/3poly sheets. Accepts the dataset-relative path (as in polygons.csv, e.g. "
-            "SolDef_AI/Dataset/CS1/R0805/V2/WIN_...Pro.jpg) or a bare filename."
-        ),
+    port: int = typer.Option(tag_server_mod.DEFAULT_PORT, help="Port for the local tagging page."),
+    export: bool = typer.Option(
+        False,
+        "--export",
+        help="Write the CSV from the saved pairing and exit, without serving the page.",
     ),
 ) -> None:
-    """Draw polygon/bbox overlays for visual QA and write per-class/package bbox stats."""
+    """Pair images of the same physical component by hand, in a local browser page.
+
+    Step 4's fingerprints could not recover this grouping — `reports/grouping_*.md` record the
+    measurement. A person can see it at a glance, so this puts the images in front of them and
+    writes the same CSV every automatic method writes.
+    """
+    if crop_tolerance < 0:
+        typer.echo("--crop-tolerance must be 0 or greater.", err=True)
+        raise typer.Exit(code=2)
     if not root.is_dir():
         typer.echo(f"No such folder: {root}", err=True)
         raise typer.Exit(code=1)
@@ -345,31 +360,45 @@ def qa_polygons(
         typer.echo(f"No such taxonomy file: {taxonomy}", err=True)
         raise typer.Exit(code=1)
 
-    if image is not None:
-        try:
-            dataset_path, annotated = qa_polygons_mod.render_single(root, image, taxonomy)
-        except ValueError as exc:
-            typer.echo(str(exc), err=True)
-            raise typer.Exit(code=1) from exc
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{Path(dataset_path).stem}_annotated.png"
-        annotated.save(out_path)
-        typer.echo(f"{dataset_path}: wrote {out_path}")
-        return
-
+    tolerance = None if full_frame else crop_tolerance
     try:
-        summary = qa_polygons_mod.write_qa_report(root, out_dir, taxonomy, seed=seed)
+        state = tag_server_mod.build_state(root, pairs, out, tolerance, taxonomy)
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    typer.echo(f"{summary['sample_images']} image(s) in overlay_sample.png")
+    summary = tag_mod.summarize(state.images, state.cells, state.groups)
+    typer.echo(f"{summary.images} joint-task image(s) across {len(state.cells)} cell(s)")
     typer.echo(
-        f"{summary['three_poly_images']} three-polygon image(s) across "
-        f"{summary['three_poly_sheets']} sheet(s)"
+        f"  {summary.groups} group(s) tagged, covering {summary.tagged} image(s); "
+        f"{summary.untagged} untagged ({summary.percent:.0f}% of pairable)"
     )
-    typer.echo(f"{summary['bbox_stats_rows']} row(s) in bbox_stats.csv")
-    typer.echo(f"wrote to {out_dir}")
+    # Not an error: the pairing is still in the JSON. But the CSV written from it is missing those
+    # images, so saying so beats letting it be discovered downstream.
+    if summary.unknown:
+        typer.echo(f"  {summary.unknown} saved path(s) no longer exist — see {pairs}")
+
+    if export:
+        rows = tag_mod.write_manual_csv(state.images, state.groups, out)
+        sizes: dict[str, int] = {}
+        for row in rows:
+            sizes[row["group_id"]] = sizes.get(row["group_id"], 0) + 1
+        singletons = sum(1 for count in sizes.values() if count == 1)
+        typer.echo(f"{len(rows)} image(s) in {len(sizes)} group(s) by {tag_mod.METHOD}")
+        typer.echo(f"  singletons: {singletons} group(s)")
+        typer.echo(f"wrote {out}")
+        return
+
+    server = tag_server_mod.make_server(state, port)
+    host, bound = server.server_address[0], server.server_address[1]
+    typer.echo(f"\ntagging page: http://{host}:{bound}  (ctrl-c to stop)")
+    typer.echo(f"every click saves {pairs} and rewrites {out}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        typer.echo("\nstopped.")
+    finally:
+        server.server_close()
 
 
 @app.command()
