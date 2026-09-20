@@ -46,8 +46,11 @@ Code lives in **one** place, this repository. The laptop writes code and measure
 GitHub Actions checks every push, Kaggle clones the repo and trains on its GPUs, and W&B collects
 results from wherever a run happened. Notebooks are launchers only.
 
-Dependencies are intentionally minimal. `wandb` is here because Stage 0 logs to it; `torch` and
-`timm` arrive in Stage 2, when there is training code that needs them.
+Dependencies are intentionally minimal. `wandb` is here because Stage 0 logs to it; `imagehash`,
+`torch` and `timm` arrive in Stage 1 for `pcbi group`, which compares images to guess which ones
+show the same physical component. `torch` is pinned to the **CPU-only** wheels (see
+`[[tool.uv.index]]` in `pyproject.toml`) so CI doesn't pull ~3GB of CUDA libraries on every push —
+Stage 2's Kaggle GPU training will need its own torch handling.
 
 ## Experiment tracking
 

@@ -7,6 +7,8 @@ import typer
 from pcbi import smoke as smoke_mod
 from pcbi.bench import env as env_mod
 from pcbi.data import audit as audit_mod
+from pcbi.data import group as group_mod
+from pcbi.data import group_report as group_report_mod
 from pcbi.data import ingest as ingest_mod
 from pcbi.data import qa_polygons as qa_polygons_mod
 from pcbi.data import show as show_mod
@@ -201,6 +203,116 @@ def ingest(
         typer.echo(f"  {class_name}: {count}")
 
     typer.echo(f"wrote {out}")
+
+
+@app.command()
+def group(
+    root: Path = typer.Option(Path("data/raw"), help="Folder holding the unzipped dataset."),
+    method: str = typer.Option("coarse", help=f"How to group: {', '.join(group_mod.METHODS)}."),
+    out: Path | None = typer.Option(
+        None, help="Where to write the CSV. Defaults to data/interim/groups_<method>.csv."
+    ),
+    threshold: float | None = typer.Option(
+        None,
+        help=(
+            "Merge threshold; its meaning depends on --method. phash: max Hamming distance "
+            "(default 10 of 256 bits). embed: min cosine similarity (default 0.98). "
+            "Ignored for coarse."
+        ),
+    ),
+    crop_tolerance: float = typer.Option(
+        group_mod.DEFAULT_CROP_TOLERANCE,
+        help=(
+            "Fingerprint a crop around the component: the box holding the image's two joint "
+            "polygons, grown by this fraction of its longer side on every side. 0 = the joints "
+            "alone. Ignored for coarse."
+        ),
+    ),
+    full_frame: bool = typer.Option(
+        False,
+        "--full-frame",
+        help="Fingerprint the whole 2560x1440 photo instead, skipping the crop stage.",
+    ),
+    taxonomy: Path = typer.Option(
+        ingest_mod.DEFAULT_TAXONOMY, help="Raw-label -> project-class mapping."
+    ),
+    report: bool = typer.Option(
+        False,
+        "--report",
+        help=(
+            "Also write reports/grouping_<method>.md. For phash/embed without --threshold this "
+            "sweeps crop tolerance against threshold and writes nothing else; re-run with a "
+            "chosen --threshold for the full report and the groups CSV."
+        ),
+    ),
+    report_out: Path | None = typer.Option(
+        None, help="Where to write the report. Defaults to reports/grouping_<method>.md."
+    ),
+) -> None:
+    """Group joint-task images by which physical component they show, for a leak-free split."""
+    if method not in group_mod.METHODS:
+        typer.echo(f"method must be one of: {', '.join(group_mod.METHODS)}", err=True)
+        raise typer.Exit(code=2)
+    if crop_tolerance < 0:
+        typer.echo("--crop-tolerance must be 0 or greater.", err=True)
+        raise typer.Exit(code=2)
+    if not root.is_dir():
+        typer.echo(f"No such folder: {root}", err=True)
+        raise typer.Exit(code=1)
+    if not taxonomy.is_file():
+        typer.echo(f"No such taxonomy file: {taxonomy}", err=True)
+        raise typer.Exit(code=1)
+    if method == "coarse" and threshold is not None:
+        typer.echo("--threshold is ignored for --method coarse.")
+    if method == "coarse" and full_frame:
+        typer.echo("--full-frame is ignored for --method coarse; it never opens an image.")
+
+    tolerance = None if full_frame else crop_tolerance
+    out = out or Path(f"data/interim/groups_{method}.csv")
+    report_out = report_out or Path(f"reports/grouping_{method}.md")
+
+    sweeping = report and method != "coarse" and threshold is None
+    if sweeping and method == "embed":
+        typer.echo(
+            f"Embedding {len(group_mod.TOLERANCE_SWEEP)} crop tolerances — one CNN pass each, "
+            f"so this takes minutes, not seconds."
+        )
+
+    try:
+        if report:
+            rows, metrics = group_report_mod.write_report(
+                root, out, report_out, method, threshold, taxonomy, tolerance=tolerance
+            )
+            if metrics is None:  # nothing chosen: sweep only, nothing to group yet
+                typer.echo(f"wrote {report_out} (parameter sweep only — no grouping built)")
+                typer.echo("Pick a crop tolerance and a threshold from the sweep, then re-run:")
+                typer.echo(
+                    f"  pcbi group --method {method} --report --threshold N --crop-tolerance T"
+                )
+                return
+        else:
+            rows = group_mod.write_groups_csv(
+                root, out, method, threshold, taxonomy, tolerance=tolerance
+            )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    sizes: dict[str, int] = {}
+    for row in rows:
+        sizes[row["group_id"]] = sizes.get(row["group_id"], 0) + 1
+    singletons = sum(1 for count in sizes.values() if count == 1)
+
+    typer.echo(f"{len(rows)} image(s) in {len(sizes)} group(s) by {method}")
+    if method != "coarse":
+        typer.echo(
+            "  crop: full frame" if tolerance is None else f"  crop tolerance: {tolerance:g}"
+        )
+    typer.echo(f"  largest group: {max(sizes.values(), default=0)} image(s)")
+    typer.echo(f"  singletons: {singletons} group(s)")
+    typer.echo(f"wrote {out}")
+    if report:
+        typer.echo(f"wrote {report_out}")
 
 
 @app.command(name="qa-polygons")
