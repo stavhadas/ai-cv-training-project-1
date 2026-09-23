@@ -129,6 +129,7 @@ Tooling: `torch 2.10.0+cu128` · `timm 1.0.26` · 2 GPUs visible.
 - [x] Step 4 — `pcbi group`, candidate groupings of "same physical component"
 - [x] Step 4b — the manual tagger, after every automatic method fell short
 - [x] Step 5 — `pcbi split`, the frozen train/val/test partition
+- [x] Step 7 — `pcbi make-crops`, the crops a model trains on and their manifest
 
 The split is frozen and fingerprinted. Regenerate it with:
 
@@ -145,3 +146,22 @@ is not frozen, and Kaggle clones this repo to train.
 Every training run records the **split hash**, a SHA-256 of the sorted `(crop ID, split)` pairs.
 Two runs reporting different hashes did not train on the same data. The hash covers the pairs
 alone, not the manifest, so adding a column to the CSV leaves it unchanged.
+
+The crops themselves come from:
+
+```bash
+uv run pcbi make-crops --margin 0.1
+```
+
+One lossless PNG per solder joint into `data/crops/`, named by its `crop_id`, plus
+`data/crops/manifest.csv` joining geometry, folder metadata, label and split into one table, plus
+per-class contact sheets in `reports/qa/crops_<class>.png` built from **train crops only** —
+deciding what a class looks like while looking at val or test is how a split leaks through a
+person. Regenerating at the same margin gives byte-identical files, so the pixels behind the split
+hash cannot drift.
+
+Unlike the split, the crops are **not** committed: ~400 PNGs is a few hundred MB and every byte is
+re-derivable from the download plus the margin. `--margin` keeps a fraction of the joint box's own
+width on the left and right and of its height on the top and bottom, so the crop holds the box's
+aspect ratio. (`pcbi group --crop-tolerance` grows by `max(w, h)` on all four sides instead; that
+one feeds a fingerprint, not a classifier.)

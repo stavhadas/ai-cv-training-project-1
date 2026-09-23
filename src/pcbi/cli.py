@@ -7,6 +7,7 @@ import typer
 from pcbi import smoke as smoke_mod
 from pcbi.bench import env as env_mod
 from pcbi.data import audit as audit_mod
+from pcbi.data import crops as crops_mod
 from pcbi.data import group as group_mod
 from pcbi.data import group_report as group_report_mod
 from pcbi.data import ingest as ingest_mod
@@ -506,6 +507,95 @@ def split(
         typer.echo(f"  {exc}", err=True)
         return
     typer.echo(f"{'replaced' if replaced else 'appended'} the split section in {audit_out}")
+
+
+@app.command(name="make-crops")
+def make_crops(
+    root: Path = typer.Option(Path("data/raw"), help="Folder holding the unzipped dataset."),
+    polygons: Path = typer.Option(
+        crops_mod.DEFAULT_POLYGONS, help="Joint-level CSV from `pcbi ingest`."
+    ),
+    splits: Path = typer.Option(
+        crops_mod.DEFAULT_SPLITS,
+        help="Frozen split from `pcbi split`; supplies group_id and split.",
+    ),
+    out_dir: Path = typer.Option(
+        crops_mod.DEFAULT_OUT_DIR, help="Where to write the crops and manifest.csv."
+    ),
+    margin: float = typer.Option(
+        crops_mod.DEFAULT_MARGIN,
+        help=(
+            "Context kept around the joint box, as a fraction of its own width (left and right) "
+            "and height (top and bottom). 0 = the joint box alone."
+        ),
+    ),
+    sheet_dir: Path = typer.Option(
+        crops_mod.DEFAULT_SHEET_DIR, help="Where to write the per-class contact sheets."
+    ),
+    seed: int = typer.Option(
+        crops_mod.SHEET_SEED, help="Seed for the contact-sheet sample when a class exceeds 64."
+    ),
+    no_sheets: bool = typer.Option(
+        False, "--no-sheets", help="Write the crops and manifest only; skip the contact sheets."
+    ),
+) -> None:
+    """Cut one PNG per solder joint, with a manifest and per-class contact sheets.
+
+    Crops are byte-identical when regenerated at the same margin — a frozen split is only worth
+    something if the pixels behind it hold still. The sheets are built from train crops only:
+    deciding what a class looks like while looking at val or test is how a split leaks.
+    """
+    if margin < 0:
+        typer.echo("--margin must be 0 or greater.", err=True)
+        raise typer.Exit(code=2)
+    if not root.is_dir():
+        typer.echo(f"No such folder: {root}", err=True)
+        raise typer.Exit(code=1)
+    if not polygons.is_file():
+        typer.echo(f"No such polygons file: {polygons}", err=True)
+        typer.echo("Run `pcbi ingest` first.", err=True)
+        raise typer.Exit(code=1)
+    if not splits.is_file():
+        typer.echo(f"No such split file: {splits}", err=True)
+        typer.echo("Run `pcbi split` first.", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        summary = crops_mod.make_crops(
+            root, polygons, splits, out_dir, margin, None if no_sheets else sheet_dir, seed
+        )
+    except (ValueError, OSError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    width, height = summary.median_size
+    typer.echo(f"{summary.crops} crop(s) from {polygons} at margin {summary.margin:g}")
+    typer.echo(f"  median crop: {width}x{height} px")
+    typer.echo(
+        "  "
+        + " · ".join(
+            f"{name} {count}"
+            for name, count in sorted(summary.classes.items(), key=lambda kv: -kv[1])
+        )
+    )
+    typer.echo(
+        "  "
+        + " · ".join(
+            f"{name} {summary.splits[name]}" for name in split_mod.SPLITS if name in summary.splits
+        )
+    )
+    # The column is still worth writing; it just is not what its name suggests on those rows.
+    if summary.merged_count:
+        typer.echo(
+            f"  note: polygon_area on {summary.merged_count} merged joint(s) is a bounding box, "
+            f"not a traced outline (notes/s1_three_polygons.md)"
+        )
+    typer.echo(f"wrote {out_dir} ({summary.crops} png)")
+    typer.echo(f"wrote {out_dir / crops_mod.MANIFEST_NAME}")
+    if summary.sheets:
+        typer.echo(
+            f"wrote {len(summary.sheets)} contact sheet(s) to {sheet_dir} (train crops only)"
+        )
 
 
 @app.command(name="qa-polygons")
