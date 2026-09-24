@@ -11,6 +11,7 @@ from pcbi.data import crops as crops_mod
 from pcbi.data import group as group_mod
 from pcbi.data import group_report as group_report_mod
 from pcbi.data import ingest as ingest_mod
+from pcbi.data import publish as publish_mod
 from pcbi.data import qa_polygons as qa_polygons_mod
 from pcbi.data import show as show_mod
 from pcbi.data import split as split_mod
@@ -596,6 +597,71 @@ def make_crops(
         typer.echo(
             f"wrote {len(summary.sheets)} contact sheet(s) to {sheet_dir} (train crops only)"
         )
+
+
+@app.command(name="publish-crops")
+def publish_crops(
+    crops_dir: Path = typer.Option(
+        publish_mod.DEFAULT_CROPS_DIR,
+        help="Folder of crops and manifest.csv from `pcbi make-crops`.",
+    ),
+    splits: Path = typer.Option(publish_mod.DEFAULT_SPLITS, help="The frozen split CSV."),
+    meta: Path = typer.Option(publish_mod.DEFAULT_META, help="The split's provenance JSON."),
+    staging: Path = typer.Option(
+        publish_mod.DEFAULT_STAGING, help="Folder to assemble the upload in; cleared on each run."
+    ),
+    slug: str = typer.Option(publish_mod.DEFAULT_SLUG, help="Kaggle dataset slug."),
+    title: str = typer.Option(publish_mod.DEFAULT_TITLE, help="Kaggle dataset title."),
+    username: str | None = typer.Option(
+        None, help="Kaggle username. Defaults to KAGGLE_USERNAME or ~/.kaggle/kaggle.json."
+    ),
+    update: str | None = typer.Option(
+        None,
+        "--update",
+        help="Add a version to an existing dataset with this message, instead of creating one.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Stage everything and print the Kaggle command without running it."
+    ),
+) -> None:
+    """Stage the crops and upload them to Kaggle as a private dataset.
+
+    There is no --public option, by design. `kaggle datasets create` is private by default and this
+    command never passes the flag that opts out; `datasets version` cannot change visibility at all.
+    Making this dataset public has to be a deliberate act on the Kaggle website.
+
+    The crops derive from a third-party dataset, so private is not only what was asked for — it is
+    what keeps a personal working copy from becoming a redistribution.
+    """
+    try:
+        publish_mod.check_slug(slug)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+
+    try:
+        report = publish_mod.publish(
+            crops_dir, splits, meta, staging, slug, title, username, update, dry_run
+        )
+    except (ValueError, OSError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    action = "version" if update else "create"
+    typer.echo(f"staged {report.files} file(s), {report.total_bytes / 1e6:.0f} MB")
+    typer.echo(f"  dataset: {report.dataset_id} (private)")
+    typer.echo(f"  {action}: {' '.join(report.argv)}")
+    # Copies rather than links, so the crops exist twice while staged.
+    typer.echo(f"wrote {staging}")
+
+    if report.dry_run:
+        typer.echo("\n--dry-run: nothing was uploaded. Drop the flag to publish.")
+        return
+    if report.output:
+        typer.echo(report.output)
+    typer.echo(f"\nhttps://www.kaggle.com/datasets/{report.dataset_id}")
+    typer.echo("Confirm it reads Private on that page — the flag is checked in tests, the page is")
+    typer.echo("the only thing that proves what Kaggle actually did.")
 
 
 @app.command(name="qa-polygons")

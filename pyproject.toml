@@ -21,7 +21,9 @@ dependencies = [
 pcbi = "pcbi.cli:app"        # typing `pcbi` runs the Typer app defined in src/pcbi/cli.py
 
 [dependency-groups]
-dev = ["ruff", "pytest"]
+# `kaggle` is dev-only: it uploads the crops (`pcbi publish-crops`) and nothing at runtime needs
+# it. Kaggle itself clones this repo to train, and an uploader has no business in that environment.
+dev = ["ruff", "pytest", "kaggle"]
 
 # torch's default PyPI wheel on Linux is the CUDA build — ~900MB plus ~2.5GB of nvidia libs, which
 # CI would download on every push. This project measures CPU latency and `pcbi group --method embed`

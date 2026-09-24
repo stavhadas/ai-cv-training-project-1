@@ -165,3 +165,30 @@ re-derivable from the download plus the margin. `--margin` keeps a fraction of t
 width on the left and right and of its height on the top and bottom, so the crop holds the box's
 aspect ratio. (`pcbi group --crop-tolerance` grows by `max(w, h)` on all four sides instead; that
 one feeds a fingerprint, not a classifier.)
+
+### Getting the crops to Kaggle
+
+Git is the wrong pipe for 111MB of PNGs, and re-deriving them on Kaggle would mean running the
+whole pipeline before every training session — which also puts the exact pixels a run trains on at
+the mercy of that re-execution. So they go up once, as a versioned Kaggle dataset:
+
+```bash
+uv run pcbi publish-crops --dry-run     # stage and print the command, upload nothing
+uv run pcbi publish-crops               # actually create it
+uv run pcbi publish-crops --update "remargined at 0.15"   # add a version to an existing one
+```
+
+Authenticate the way the Kaggle CLI expects — `~/.kaggle/kaggle.json` (Account → Create New Token)
+or `KAGGLE_USERNAME` / `KAGGLE_KEY`. Neither lives in the repo, same as the W&B key. The `kaggle`
+CLI is a dev dependency, so `uv sync` provides it.
+
+**The dataset is private, and there is no flag to make it public.** `kaggle datasets create` is
+private unless `--public` is passed, `pcbi publish-crops` never passes it, and a test asserts that
+for every code path. This matters beyond the preference: the crops are a derivative of a
+third-party dataset (SolDef_AI), so a private personal copy is one thing and a public
+redistribution is another. Check that licence before ever flipping the switch on kaggle.com.
+
+Cell 5 of `notebooks/kaggle_train.ipynb` checks the mounted dataset every session: 400 PNGs, the
+manifest agreeing with them, and the split hash matching `manifest_meta.json`. It also unpacks the
+crops archive itself if Kaggle has not. `notes/s1_publishing_crops.md` records the decisions behind
+all of this — in particular why `--keep-tabular` is load-bearing rather than cosmetic.
