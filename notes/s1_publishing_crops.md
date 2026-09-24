@@ -82,11 +82,32 @@ Consequence worth knowing: someone authenticated by OAuth has a perfectly workin
 username on disk for us to read**. That is not a broken setup — pass `--username`. The error message
 says so.
 
-## Open, to be filled in after the first real upload
+## The first real upload — what actually happened
 
-- [ ] Dataset page reads **Private**.
-- [ ] `/kaggle/input/<slug>/` structure — did `--dir-mode zip` arrive as a browsable `crops/`
-      folder, or as an archive? Cell 5 of `notebooks/kaggle_train.ipynb` handles both, but record
-      which actually happened so the fallback can eventually be deleted if it is dead code.
-- [ ] Split hash printed on Kaggle matches `7925ce616931ad52c69a46e94b69e113fc9713d4bb15c5f9163ba0354e4c8b0c`.
+Uploaded as `stavhadas/pcbi-solder-joint-crops` and verified from a Kaggle session by Cell 5 of
+`notebooks/kaggle_train.ipynb`:
+
+```
+dataset: /kaggle/input/datasets/stavhadas/pcbi-solder-joint-crops
+400 crops · 400 manifest rows · crops at /kaggle/input/datasets/stavhadas/pcbi-solder-joint-crops/crops
+split hash: 7925ce616931ad52c69a46e94b69e113fc9713d4bb15c5f9163ba0354e4c8b0c
+```
+
+- **The mount path is `/kaggle/input/datasets/<owner>/<slug>/`**, not `/kaggle/input/<slug>/`.
+  Cell 5 first globbed one level deep and failed on a dataset that was correctly attached. Cell 4's
+  own saved output had shown the three-level form all along. It now searches depths 1-4 by
+  filename, which covers both layouts, and is bounded rather than `rglob` because SolDef_AI is
+  mounted alongside and walking it every session would cost seconds.
+- **`--dir-mode zip` arrived expanded.** `crops/` is a browsable folder of 400 PNGs, not an
+  archive. The unpack fallback in Cell 5 has therefore never run. Keep it until a second upload
+  confirms the behaviour is stable, then delete it rather than carry untested code.
+- **The split hash on Kaggle matches the local one exactly**, so the uploaded crops, the uploaded
+  `split_v1.csv` and `data/manifest_meta.json` all describe the same partition. `--keep-tabular`
+  did its job: the CSVs came through unrewritten.
+- Manifest and PNGs agree: 400 rows, 400 files, `crop_id` set equal to the file-stem set.
+
+### Still to record
+
+- [ ] Dataset page reads **Private**. The argv could not have asked for anything else, but this is
+      a human eyeball check on what Kaggle did, and nothing above substitutes for it.
 - [ ] **Dataset version number**, so a future run can be pinned to it.
