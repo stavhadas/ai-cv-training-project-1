@@ -13,11 +13,29 @@ top of already-JPEG sources), rows are processed in sorted `crop_id` order, the 
 are pinned rather than left to a Pillow default, and `save_crop` copies onto a fresh canvas so no
 source EXIF rides along into the training data.
 
+**Crops come out square**, and the squaring happens here rather than in a transform. A model wants a
+square input, and every way of squaring a non-square crop later loses something: resizing distorts
+the joint, centre-cropping discards the edges of the very thing being classified, letterboxing feeds
+the model synthetic bars. None of that is necessary when the source frame is 2560x1440 and the crop
+is a few hundred pixels — the pixels needed to square the box are **real board**, already
+photographed. Measured on the real download: after the margin the square side runs 224 to 763
+against a frame whose short dimension is 1440, so every square box fits and none even needs shifting
+to stay inside. The smallest is exactly the model input size, so nothing is upscaled.
+
+The box is built in three named stages, so each is separately testable and the squaring is not
+buried inside a clamp: `expand` applies the margin, `squarify` grows the shorter side, and `fit`
+lands it on whole pixels inside the frame. `crop_box` composes them.
+
 The margin is a fraction of **each side independently**: `margin * bbox_w` on the left and right,
-`margin * bbox_h` on the top and bottom, so the crop keeps the joint box's aspect ratio. This is
+`margin * bbox_h` on the top and bottom. It is applied *before* squaring, so `--margin` still means
+"how much context around the joint" rather than interacting with the aspect ratio. This is
 deliberately not what `group.crop_box` does — that one grows by `tolerance * max(w, h)` on all four
 sides, because it feeds a fingerprint that compares whole components and wanted a comparable amount
 of surrounding board regardless of box shape. Two crop rules, two jobs; see `crop_box` below.
+
+Squaring changes pixels, not identity. Crop ids, `split_v1.csv`, `manifest_meta.json` and the split
+hash are all untouched by it — the hash covers `(crop_id, split)` pairs, so it is *supposed* not to
+move here. Regenerating at a new margin and republishing is a new dataset version, not a new split.
 
 One caveat the manifest cannot express in a column. For the joints that `pcbi ingest` merged (43 of
 400 on the real download, the double-defect images in notes/s1_three_polygons.md), `points` is no
@@ -149,32 +167,71 @@ def load_splits(path: Path) -> dict[str, tuple[str, str]]:
         return {row["crop_id"]: (row["group_id"], row["split"]) for row in reader}
 
 
+def expand(
+    bbox: tuple[float, float, float, float], margin: float
+) -> tuple[float, float, float, float]:
+    """The joint box grown by `margin` of its own width and height. Still floats, still unclamped.
+
+    Per-axis rather than isotropic: the horizontal margin scales with the box's width and the
+    vertical with its height. `group.crop_box` deliberately does the opposite for fingerprinting —
+    read its docstring for why that job wanted the other rule.
+    """
+    x0, y0, x1, y1 = bbox
+    margin_x = margin * (x1 - x0)
+    margin_y = margin * (y1 - y0)
+    return (x0 - margin_x, y0 - margin_y, x1 + margin_x, y1 + margin_y)
+
+
+def squarify(box: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    """Grow the shorter side symmetrically until the box is square, keeping its centre.
+
+    Symmetric rather than one-sided so the joint stays centred: growing only rightwards would push
+    the joint to the edge of its own crop and make the framing depend on which axis was short.
+    """
+    x0, y0, x1, y1 = box
+    side = max(x1 - x0, y1 - y0)
+    centre_x, centre_y = (x0 + x1) / 2, (y0 + y1) / 2
+    half = side / 2
+    return (centre_x - half, centre_y - half, centre_x + half, centre_y + half)
+
+
+def fit(box: tuple[float, float, float, float], size: tuple[int, int]) -> tuple[int, int, int, int]:
+    """Land a float box on whole pixels, inside the frame, without losing its squareness.
+
+    Two things have to be handled so a square box stays square.
+
+    Rounding: `floor` on the mins and `ceil` on the maxes only ever grows the box, but it can grow
+    the two axes by different amounts and leave a square box a pixel off. The side is recomputed on
+    the integer grid afterwards.
+
+    Edges: a box overhanging the frame is **shifted** back inside at full size, not clipped.
+    Clipping would make it non-square again, which is the whole thing this is trying to avoid, and
+    the board beyond a joint is real content worth keeping. Clipping survives only as a last resort
+    for a square genuinely larger than the frame — impossible on this data, where the largest square
+    is 763px against a 1440px short side, but the function should not silently lie for other inputs.
+    """
+    left, top = int(floor(box[0])), int(floor(box[1]))
+    side = max(int(ceil(box[2])) - left, int(ceil(box[3])) - top)
+
+    width, height = size
+    left = max(0, min(left, width - side))
+    top = max(0, min(top, height - side))
+    return (left, top, min(width, left + side), min(height, top + side))
+
+
 def crop_box(
     bbox: tuple[float, float, float, float],
     margin: float,
     size: tuple[int, int],
 ) -> tuple[int, int, int, int]:
-    """The joint box grown by `margin` of its own width and height, clamped to the frame.
+    """The square pixel box one crop is cut from: margin, then squared, then fitted to the frame.
 
-    Per-axis rather than isotropic: the horizontal margin scales with the box's width and the
-    vertical with its height, so the crop has the same aspect ratio as the joint box it came from.
-    `group.crop_box` deliberately does the opposite for fingerprinting — read its docstring for why
-    that job wanted the other rule.
-
-    Floor on the mins and ceil on the maxes, so the integer box only ever grows to enclose the
-    float one; a joint near an edge clamps and comes out asymmetric rather than padded, because
-    there is no board beyond the frame to include.
+    The order is load-bearing. Applying the margin first keeps `--margin` meaning "context around
+    the joint" instead of interacting with the aspect ratio; squaring second means the extra pixels
+    come from the shorter axis only; fitting last is what guarantees the result is a real region of
+    a real image.
     """
-    x0, y0, x1, y1 = bbox
-    margin_x = margin * (x1 - x0)
-    margin_y = margin * (y1 - y0)
-    width, height = size
-    return (
-        max(0, int(floor(x0 - margin_x))),
-        max(0, int(floor(y0 - margin_y))),
-        min(width, int(ceil(x1 + margin_x))),
-        min(height, int(ceil(y1 + margin_y))),
-    )
+    return fit(squarify(expand(bbox, margin)), size)
 
 
 def load_source(root: Path, dataset_path: str) -> Image.Image:

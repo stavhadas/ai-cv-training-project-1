@@ -231,28 +231,67 @@ def test_the_crops_carry_no_metadata_from_the_source_photo(crops_dataset, tmp_pa
 # --- the crop box ----------------------------------------------------------------------------
 
 
-def test_margin_zero_is_the_joint_box_itself():
-    assert crops_mod.crop_box((50.0, 40.0, 150.0, 240.0), 0.0, FRAME) == (50, 40, 150, 240)
-
-
-def test_the_margin_scales_each_axis_by_that_axis(crops_dataset):
+def test_the_margin_scales_each_axis_by_that_axis():
     """The rule that separates this from group.crop_box, which uses max(w, h) on all four sides.
 
     A 100x200 box at margin 0.1 grows by 10px horizontally and 20px vertically — not 20 on both,
-    which is what an isotropic margin would give.
+    which is what an isotropic margin would give. Checked on `expand` alone, because `crop_box`
+    squares the result afterwards and would hide which stage did what.
     """
-    assert crops_mod.crop_box((50.0, 40.0, 150.0, 240.0), 0.1, FRAME) == (40, 20, 160, 260)
+    assert crops_mod.expand((50.0, 40.0, 150.0, 240.0), 0.1) == (40.0, 20.0, 160.0, 260.0)
+
+
+def test_margin_zero_expands_nothing():
+    assert crops_mod.expand((50.0, 40.0, 150.0, 240.0), 0.0) == (50.0, 40.0, 150.0, 240.0)
+
+
+def test_squarify_grows_the_shorter_side_symmetrically():
+    """Symmetric, so the joint stays centred instead of being pushed against one edge."""
+    # 100 wide, 200 tall -> 200x200, gaining 50 on the left and 50 on the right
+    assert crops_mod.squarify((50.0, 40.0, 150.0, 240.0)) == (0.0, 40.0, 200.0, 240.0)
+    # 200 wide, 100 tall -> grows vertically instead
+    assert crops_mod.squarify((0.0, 50.0, 200.0, 150.0)) == (0.0, 0.0, 200.0, 200.0)
+
+
+def test_squarify_leaves_a_square_box_alone():
+    assert crops_mod.squarify((10.0, 20.0, 110.0, 120.0)) == (10.0, 20.0, 110.0, 120.0)
 
 
 def test_the_box_grows_outward_to_whole_pixels():
-    """Floor the mins and ceil the maxes, so no annotated pixel is ever cut off by rounding."""
-    assert crops_mod.crop_box((50.5, 40.5, 150.5, 240.5), 0.0, FRAME) == (50, 40, 151, 241)
+    """Floor the mins and ceil the maxes, so no annotated pixel is cut off by rounding."""
+    left, top, right, bottom = crops_mod.fit((50.5, 40.5, 150.5, 140.5), FRAME)
+    assert (left, top) == (50, 40)
+    assert (right - left, bottom - top) == (101, 101)
 
 
-def test_a_joint_against_the_frame_edge_clamps_rather_than_pads():
-    """There is no board beyond the frame, so an edge crop is honestly asymmetric."""
-    assert crops_mod.crop_box((0.0, 0.0, 60.0, 50.0), 0.5, FRAME) == (0, 0, 90, 75)
-    assert crops_mod.crop_box((370.0, 280.0, 400.0, 300.0), 0.5, FRAME) == (355, 270, 400, 300)
+def test_fit_shifts_an_overhanging_box_instead_of_clipping_it():
+    """Clipping would un-square the box, which is the whole thing squaring is for.
+
+    The frame here is 400x300. A 200x200 box centred at (350, 250) hangs off both edges; shifting
+    it back keeps all 200x200 of it, where clipping would have left 50x50.
+    """
+    box = crops_mod.fit((250.0, 150.0, 450.0, 350.0), FRAME)
+    left, top, right, bottom = box
+    assert (right - left, bottom - top) == (200, 200)
+    assert (right, bottom) == (400, 300)  # flush against the corner it overhung
+
+    box = crops_mod.fit((-50.0, -30.0, 150.0, 170.0), FRAME)
+    left, top, right, bottom = box
+    assert (left, top) == (0, 0)
+    assert (right - left, bottom - top) == (200, 200)
+
+
+def test_crop_box_is_square_for_any_joint_shape():
+    """The property the whole change exists to produce."""
+    for bbox in [
+        (50.0, 40.0, 150.0, 240.0),  # tall
+        (10.0, 50.0, 210.0, 150.0),  # wide
+        (10.0, 20.0, 110.0, 120.0),  # already square
+        (0.0, 0.0, 60.0, 50.0),  # against the top-left corner
+        (370.0, 280.0, 400.0, 300.0),  # against the bottom-right corner
+    ]:
+        left, top, right, bottom = crops_mod.crop_box(bbox, 0.1, FRAME)
+        assert right - left == bottom - top, (bbox, (left, top, right, bottom))
 
 
 # --- the manifest ----------------------------------------------------------------------------
@@ -314,8 +353,21 @@ def test_the_geometry_columns_describe_the_joint_before_the_margin(crops_dataset
     target = "CS1_R0805_V2_a_1"  # the 100x200 joint, well inside the frame
     assert a[target]["bbox_w"] == b[target]["bbox_w"] == "100.00"
     assert a[target]["bbox_h"] == b[target]["bbox_h"] == "200.00"
-    assert int(a[target]["crop_w"]) == 100
-    assert int(b[target]["crop_w"]) == 150  # 100 + 2 * 25
+    # The crop is square, so its side is the *longer* axis after the margin: 200, then 200 + 2*50.
+    assert int(a[target]["crop_w"]) == 200
+    assert int(b[target]["crop_w"]) == 300
+
+
+def test_every_crop_is_square(crops_dataset, tmp_path):
+    """Squaring here is what lets the Dataset layer resize without choosing what to lose."""
+    root, polygons, splits = crops_dataset
+    out = tmp_path / "crops"
+    crops_mod.make_crops(root, polygons, splits, out, margin=0.1, sheet_dir=None)
+
+    for row in read_manifest(out):
+        assert row["crop_w"] == row["crop_h"], (row["crop_id"], row["crop_w"], row["crop_h"])
+        with Image.open(out / f"{row['crop_id']}.png") as img:
+            assert img.width == img.height, row["crop_id"]
 
 
 def test_the_manifest_carries_the_split_and_group(crops_dataset, tmp_path):
@@ -524,3 +576,9 @@ def test_real_dataset_crops_match_the_frozen_split(tmp_path):
     assert summary.classes == {"excess": 157, "spike": 121, "normal": 65, "insufficient": 57}
     assert summary.splits == {"train": 238, "val": 82, "test": 80}
     assert summary.merged_count == 43
+
+    # Every square box fits inside a 2560x1440 frame — the largest is 763px — so none is clipped
+    # back to a rectangle. If this fails, `fit` ran out of room on some joint and the squaring
+    # argument (the extra pixels are real board) no longer holds for the whole dataset.
+    rows = read_manifest(tmp_path / "crops")
+    assert all(row["crop_w"] == row["crop_h"] for row in rows)
