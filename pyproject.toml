@@ -15,6 +15,9 @@ dependencies = [
     "timm>=1.0.29",
     "numpy>=2.2.6",
     "scikit-learn>=1.6",
+    "omegaconf>=2.3.1",
+    "tqdm>=4.70.1",
+    "matplotlib>=3.10.9",
 ]
 
 [project.scripts]

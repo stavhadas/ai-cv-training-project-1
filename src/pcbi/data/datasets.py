@@ -26,7 +26,7 @@ from typing import Any, NamedTuple
 from .crops import load_source
 
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 DEFAULT_MANIFEST = Path("data/crops/manifest.csv")
 DEFAULT_CROPS_DIR = Path("data/crops")
@@ -186,6 +186,7 @@ def make_dataloader(
     cfg: dict[str, Any] | None = None,
     seed: int = 0,
     shuffle: bool = False,
+    sampler: Sampler | None = None,
 ) -> DataLoader:
     """Wrap a `CropDataset` in a `DataLoader` whose behaviour is a function of `seed` alone.
 
@@ -197,7 +198,12 @@ def make_dataloader(
     on val and test it silently discards up to a batch of examples and quietly changes the
     denominator of every metric. With 82 val crops and a batch of 32, that would be 18 crops
     disappearing from a score without anything saying so.
+
+    `sampler` replaces shuffling outright (e.g. `imbalance.build_sampler`'s weighted sampler), so
+    passing it together with `shuffle=True` is refused rather than left to torch's terser error.
     """
+    if sampler is not None and shuffle:
+        raise ValueError("pass shuffle=True or a sampler, not both; the sampler decides order.")
     cfg = cfg or {}
     generator = torch.Generator()
     generator.manual_seed(seed)
@@ -206,6 +212,7 @@ def make_dataloader(
         dataset,
         batch_size=cfg.get("batch_size", 32),
         shuffle=shuffle,
+        sampler=sampler,
         num_workers=cfg.get("num_workers", 0),
         pin_memory=cfg.get("pin_memory", False),
         persistent_workers=bool(cfg.get("num_workers", 0)) and cfg.get("persistent_workers", False),

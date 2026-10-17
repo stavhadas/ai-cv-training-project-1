@@ -17,6 +17,7 @@ from pcbi.data import show as show_mod
 from pcbi.data import split as split_mod
 from pcbi.data import tag as tag_mod
 from pcbi.data import tag_server as tag_server_mod
+from pcbi.data.datasets import DEFAULT_CROPS_DIR, DEFAULT_MANIFEST
 
 app = typer.Typer(help="PCB solder-joint inspector.", no_args_is_help=True)
 
@@ -719,6 +720,61 @@ def qa_polygons(
     )
     typer.echo(f"{summary['bbox_stats_rows']} row(s) in bbox_stats.csv")
     typer.echo(f"wrote to {out_dir}")
+
+
+@app.command()
+def train(
+    config: Path = typer.Option(
+        ..., "--config", help="Experiment YAML, e.g. configs/exp/s2_first.yaml."
+    ),
+    no_wandb: bool = typer.Option(False, "--no-wandb", help="Disable W&B logging entirely."),
+    max_steps: int | None = typer.Option(
+        None, "--max-steps", help="Stop after N optimizer steps in total (a quick plumbing check)."
+    ),
+    overfit_batch: int | None = typer.Option(
+        None,
+        "--overfit-batch",
+        help="Train and evaluate on the first N training crops only; loss should go to ~0.",
+    ),
+    manifest: Path = typer.Option(DEFAULT_MANIFEST, help="manifest.csv from `pcbi make-crops`."),
+    crops_dir: Path = typer.Option(DEFAULT_CROPS_DIR, help="Folder holding the crop PNGs."),
+    out_dir: Path = typer.Option(Path("outputs"), help="Parent folder for the run folder."),
+) -> None:
+    """Train a classifier on the crops, validating every epoch; log to W&B group s2_first."""
+    from omegaconf.errors import OmegaConfBaseException
+
+    # Imported here, not at the top: torch and timm would make every other command slow to start.
+    from pcbi.train import config as config_mod
+    from pcbi.train import run as run_mod
+
+    for flag, value in (("--max-steps", max_steps), ("--overfit-batch", overfit_batch)):
+        if value is not None and value < 1:
+            typer.echo(f"{flag} must be at least 1.", err=True)
+            raise typer.Exit(code=2)
+    if not config.is_file():
+        typer.echo(f"No such config: {config}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        cfg = config_mod.load_config(config)
+    except (ValueError, OmegaConfBaseException) as exc:
+        typer.echo(f"{config}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    try:
+        run_dir = run_mod.run_training(
+            cfg,
+            manifest,
+            crops_dir,
+            out_dir,
+            use_wandb=not no_wandb,
+            max_steps=max_steps,
+            overfit_batch=overfit_batch,
+        )
+    except ValueError as exc:  # missing manifest, empty split, bad labels: named by the dataset
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"wrote {run_dir}")
 
 
 @app.command()

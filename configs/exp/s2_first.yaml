@@ -1,0 +1,17 @@
+# Stage 2: the first model. Only the settings that change while experimenting; unknown keys are
+# rejected by `pcbi.train.config.load_config`, so a typo fails at load time.
+model: resnet50.a1_in1k   # full pretrained tag, so every rerun starts from identical weights
+optimizer: sgd            # sgd | adam
+lr: 0.01                  # provisional: Step 5 tries two or three values on Kaggle
+epochs: 200                # provisional: long enough for the validation curve to flatten
+batch_size: 32
+num_workers: 2
+imbalance:
+  # Train counts are excess 93 / spike 72 / normal 39 / insufficient 34 (about 2.7:1), and there are
+  # only 238 train crops. A weighted loss keeps every crop seen once per epoch; a weighted sampler
+  # would draw the ~34 `insufficient` crops about twice as often, which on this little data mostly
+  # invites memorising them. Inverse frequency is the plain baseline; effective_number is worth a
+  # later comparison, but at this ratio the two weight vectors differ little.
+  mode: class_weighted_loss     # none | class_weighted_loss | weighted_sampler
+  weight_scheme: inverse_freq   # inverse_freq | effective_number (ignored when mode: none)
+  beta: 0.999                   # effective_number only
