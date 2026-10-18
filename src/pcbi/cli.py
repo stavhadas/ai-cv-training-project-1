@@ -754,6 +754,15 @@ def train(
     if not config.is_file():
         typer.echo(f"No such config: {config}", err=True)
         raise typer.Exit(code=1)
+    # Checked here, before the model is built: otherwise a wrong path is only discovered after
+    # the pretrained weights have been downloaded.
+    if not manifest.is_file():
+        typer.echo(f"No such manifest: {manifest}", err=True)
+        typer.echo("Run `pcbi make-crops`, or point --manifest/--crops-dir at the crops.", err=True)
+        raise typer.Exit(code=1)
+    if not crops_dir.is_dir():
+        typer.echo(f"No such crops folder: {crops_dir}", err=True)
+        raise typer.Exit(code=1)
 
     try:
         cfg = config_mod.load_config(config)
