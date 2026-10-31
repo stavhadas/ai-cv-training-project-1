@@ -40,6 +40,8 @@ from torch.utils.data import Subset
 from pcbi import smoke
 from pcbi.data.datasets import CLASS_ORDER, CropDataset, make_dataloader
 from pcbi.data.transforms import build_eval_transform, build_train_transform
+from pcbi.eval.artifacts import ARTIFACT_TYPE, PREDS_FILE, artifact_name
+from pcbi.eval.predictions import save_predictions
 from pcbi.train.config import TrainConfig
 from pcbi.train.imbalance import build_criterion, build_sampler, class_counts_from_manifest
 from pcbi.train.loop import train_one_epoch, validate
@@ -137,6 +139,7 @@ def run_training(
     overfit_batch: int | None = None,
     pretrained: bool = True,
     group: str = WANDB_GROUP,
+    tags: list[str] | None = None,
 ) -> Path:
     """Train `cfg.model` on the train split, validating every epoch. Returns the run folder.
 
@@ -149,6 +152,8 @@ def run_training(
         overfit_batch: train and evaluate on the first N training crops only.
         pretrained: load ImageNet weights. Tests pass ``False`` so they need no network.
         group: the W&B run group, so repeated runs of one experiment overlay in one panel.
+        tags: W&B tags for filtering runs later; ``overfit`` is added automatically with
+            `overfit_batch`.
     """
     import wandb  # lazily, like smoke.py: `pcbi --help` must not pay for it
 
@@ -205,13 +210,16 @@ def run_training(
         "split_hash": split_hash(),
         "class_counts_train": dict(zip(CLASS_ORDER, counts.tolist(), strict=True)),
     }
+    run_tags = list(dict.fromkeys(tags or []))  # de-duplicated, order kept
+    if overfit_batch is not None and "overfit" not in run_tags:
+        run_tags.append("overfit")
     run = wandb.init(
         project=smoke.DEFAULT_PROJECT,
         group=group,
         job_type="train",
         mode=smoke.resolve_mode() if use_wandb else "disabled",
         config=run_config,
-        tags=["overfit"] if overfit_batch is not None else None,
+        tags=run_tags or None,
     )
     try:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -263,6 +271,18 @@ def run_training(
 
         plot_path = report(val.logits, val.labels, run_dir, eval_name)
         run.log({"val/confusion_matrix": wandb.Image(str(plot_path))})
+
+        # Validation only. The test split is never evaluated here, so it cannot leak into choices
+        # made from these files. An overfit run's "val" is its own training crops, so it has
+        # nothing to save under that name.
+        if overfit_batch is None:
+            preds_path = run_dir / PREDS_FILE
+            save_predictions(val, preds_path)
+            print(f"wrote {preds_path}")
+            if use_wandb:
+                artifact = wandb.Artifact(artifact_name(run.id), type=ARTIFACT_TYPE)
+                artifact.add_file(str(preds_path))
+                run.log_artifact(artifact)
         return run_dir
     finally:
         run.finish()

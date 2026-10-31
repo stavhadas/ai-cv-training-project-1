@@ -14,6 +14,7 @@ from torch.utils.data import SequentialSampler
 
 from pcbi.data import datasets as datasets_mod
 from pcbi.data.datasets import CLASS_ORDER
+from pcbi.eval.predictions import load_predictions
 from pcbi.train import run as run_mod
 from pcbi.train.config import ImbalanceConfig, TrainConfig
 
@@ -68,6 +69,9 @@ def test_a_short_run_writes_the_report_and_the_confusion_matrix(crops, tmp_path,
     assert (run_dir / "confusion_matrix.png").is_file()
     assert (run_dir / "classification_report.txt").is_file()
     assert (run_dir / "config.yaml").is_file()
+    preds = load_predictions(run_dir / "val_preds.npz")
+    assert preds.logits.shape == (8, len(CLASS_ORDER))  # the 8 val crops, never the train ones
+    assert all(crop_id.startswith("val_") for crop_id in preds.crop_ids)
     out = capsys.readouterr().out
     assert "--max-steps 2 reached; stopping after epoch 1." in out
     for name in CLASS_ORDER:
@@ -89,7 +93,8 @@ def test_max_steps_caps_the_optimizer_steps_across_epochs(crops, tmp_path, monke
 
 
 def test_overfit_batch_evaluates_on_the_same_crops_it_trains_on(crops, tmp_path, capsys):
-    train(crops, tmp_path, overfit_batch=4)
+    run_dir = train(crops, tmp_path, overfit_batch=4)
+    assert not (run_dir / "val_preds.npz").exists()  # its "val" is train crops; nothing to save
     out = capsys.readouterr().out
     assert "train 4 | overfit-4 4" in out
     assert "classification report (overfit-4, 4 crops)" in out

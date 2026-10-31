@@ -745,6 +745,9 @@ def train(
     group: str = typer.Option(
         "s2_first", "--group", help="W&B group, so repeated runs overlay in one panel."
     ),
+    tag: list[str] = typer.Option(
+        [], "--tag", help="W&B tag for filtering runs later. Repeat for several: --tag a --tag b."
+    ),
 ) -> None:
     """Train a classifier on the crops, validating every epoch; log to the given W&B group."""
     import dataclasses
@@ -761,6 +764,9 @@ def train(
             raise typer.Exit(code=2)
     if not group.strip():
         typer.echo("--group must not be empty.", err=True)
+        raise typer.Exit(code=2)
+    if any(not t.strip() for t in tag):
+        typer.echo("--tag must not be empty.", err=True)
         raise typer.Exit(code=2)
     if not config.is_file():
         typer.echo(f"No such config: {config}", err=True)
@@ -793,11 +799,30 @@ def train(
             max_steps=max_steps,
             overfit_batch=overfit_batch,
             group=group,
+            tags=tag,
         )
     except ValueError as exc:  # missing manifest, empty split, bad labels: named by the dataset
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(f"wrote {run_dir}")
+
+
+@app.command()
+def pull(
+    run: str = typer.Option(..., "--run", help="W&B run id, e.g. the 8 characters in its URL."),
+    out: Path = typer.Option(Path("runs"), help="Downloads land in <out>/<run_id>/."),
+    project: str = typer.Option(smoke_mod.DEFAULT_PROJECT, help="W&B project the run is in."),
+    entity: str | None = typer.Option(None, help="W&B entity. Defaults to your default entity."),
+) -> None:
+    """Download a training run's validation predictions (val_preds.npz) from W&B."""
+    from pcbi.eval import artifacts as artifacts_mod
+
+    try:
+        preds = artifacts_mod.pull_predictions(run, out, project, entity)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"wrote {preds}")
 
 
 @app.command()
