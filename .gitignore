@@ -47,6 +47,12 @@ __pycache__/
 
 # qa reports
 /reports/qa/
+
+# Stage 3 outputs, all rebuilt from the W&B prediction artifacts: `pcbi pull` / `pcbi summarize`
+# cache val_preds.npz under runs/, `pcbi eval` and `pcbi gallery` write the rest.
+/runs/
+/reports/eval/
+/reports/gallery/
 # Note: uv.lock and reports/ are deliberately NOT ignored — both are committed.
 
 # Claude Code local settings — machine-specific permissions, not shared project config.

@@ -866,6 +866,11 @@ def sweep(
         help="key=value1,value2,... One run per value and seed. Repeat to sweep several keys.",
     ),
     group: str = typer.Option("s3_imbalance", "--group", help="W&B group for every run."),
+    tag: list[str] = typer.Option(
+        [],
+        "--tag",
+        help="Extra W&B tag on every run, besides each run's option values. Repeatable.",
+    ),
     no_wandb: bool = typer.Option(False, "--no-wandb", help="Disable W&B logging entirely."),
     max_steps: int | None = typer.Option(
         None, "--max-steps", help="Cap every run at N optimizer steps (a quick plumbing check)."
@@ -883,6 +888,9 @@ def sweep(
 
     if max_steps is not None and max_steps < 1:
         typer.echo("--max-steps must be at least 1.", err=True)
+        raise typer.Exit(code=2)
+    if any(not t.strip() for t in tag):
+        typer.echo("--tag must not be empty.", err=True)
         raise typer.Exit(code=2)
     for path, what in ((config, "config"), (manifest, "manifest")):
         if not path.is_file():
@@ -917,7 +925,7 @@ def sweep(
                 use_wandb=not no_wandb,
                 max_steps=max_steps,
                 group=group,
-                tags=list(job.option.values()),
+                tags=[*job.option.values(), *tag],
                 sweep=job.option,
             )
             typer.echo(f"wrote {run_dir}")
