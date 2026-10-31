@@ -13,6 +13,7 @@ fails here rather than three layers into training.
 passes ``dataclasses.asdict(cfg.imbalance)`` straight to `build_criterion` / `build_sampler`.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -70,8 +71,11 @@ class TrainConfig:
                 raise ValueError(f"imbalance.beta must be in [0, 1), got {self.imbalance.beta}.")
 
 
-def load_config(path: str | Path) -> TrainConfig:
+def load_config(path: str | Path, overrides: Sequence[str] = ()) -> TrainConfig:
     """Load a YAML experiment config, rejecting unknown keys and invalid values.
+
+    `overrides` are dotted ``key=value`` strings applied on top of the YAML, e.g.
+    ``imbalance.mode=none``. They go through the same schema, so a mistyped key fails the same way.
 
     Raises:
         omegaconf.errors.ConfigKeyError: the YAML has a key the schema doesn't declare.
@@ -79,5 +83,5 @@ def load_config(path: str | Path) -> TrainConfig:
         ValueError: a value is the right type but not an allowed one (e.g. ``optimizer: rmsprop``).
     """
     schema = OmegaConf.structured(TrainConfig)
-    merged = OmegaConf.merge(schema, OmegaConf.load(path))
+    merged = OmegaConf.merge(schema, OmegaConf.load(path), OmegaConf.from_dotlist(list(overrides)))
     return OmegaConf.to_object(merged)

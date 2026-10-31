@@ -29,29 +29,44 @@ def rates_at(scores: torch.Tensor, is_defect: torch.Tensor, tau: float):
 
     return miss_rate, false_alarm_rate
 
-def threshold_sweep(scores: torch.Tensor, is_defect: torch.Tensor, num_thresholds: int = 100):
+def threshold_sweep(scores: torch.Tensor, is_defect: torch.Tensor):
     """
-    Sweep thresholds from 0 to 1 and compute miss rate and false alarm rate at each threshold.
+    Evaluate every unique score as the threshold tau, largest first.
+
+    The rates only change where tau crosses a score, so the unique scores are exactly the distinct
+    operating points; a fixed grid would skip some whenever two scores sit closer together than
+    its spacing.
+
     Returns a list of (threshold, miss_rate, false_alarm_rate) tuples.
     """
-    thresholds = np.linspace(0, 1, num_thresholds)
+    thresholds = sorted(set(scores.tolist()), reverse=True)
     results = []
-    
+
     for tau in thresholds:
         miss_rate, false_alarm_rate = rates_at(scores, is_defect, tau)
         results.append((tau, miss_rate, false_alarm_rate))
-    
+
     return results
 
-def plot_roc(sweep, path): 
-
+def plot_roc(sweep, path):
+    """
+    Draw the ROC curve: x = false-alarm rate, y = 1 - miss rate (the fraction of defects caught),
+    with the diagonal as the "guessing" reference.
+    """
     thresholds, miss_rates, false_alarm_rates = zip(*sweep)
-    
-    plt.figure(figsize=(8, 6))
-    plt.plot(false_alarm_rates, miss_rates, marker='o')
-    plt.title('ROC Curve')
-    plt.xlabel('False Alarm Rate')
-    plt.ylabel('Miss Rate')
+    # Above the highest score nothing is flagged: the curve starts at (0, 0).
+    x = [0.0, *false_alarm_rates]
+    y = [0.0, *(1 - m for m in miss_rates)]
+
+    plt.figure(figsize=(6, 6))
+    plt.plot(x, y, marker='o', markersize=3, label='model')
+    plt.plot([0, 1], [0, 1], linestyle='--', color='gray', label='guessing')
+    plt.title('ROC curve')
+    plt.xlabel('False-alarm rate (good joints flagged)')
+    plt.ylabel('1 - miss rate (defects caught)')
+    plt.xlim(0, 1)
+    plt.ylim(0, 1.02)
+    plt.legend(loc='lower right')
     plt.grid()
-    plt.savefig(path)
+    plt.savefig(path, dpi=120)
     plt.close()

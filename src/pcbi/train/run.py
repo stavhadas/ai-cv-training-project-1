@@ -140,6 +140,7 @@ def run_training(
     pretrained: bool = True,
     group: str = WANDB_GROUP,
     tags: list[str] | None = None,
+    sweep: dict[str, str] | None = None,
 ) -> Path:
     """Train `cfg.model` on the train split, validating every epoch. Returns the run folder.
 
@@ -154,6 +155,8 @@ def run_training(
         group: the W&B run group, so repeated runs of one experiment overlay in one panel.
         tags: W&B tags for filtering runs later; ``overfit`` is added automatically with
             `overfit_batch`.
+        sweep: the option this run is one value of, as dotted key -> value; logged to the W&B
+            config so `pcbi summarize` can group runs by it.
     """
     import wandb  # lazily, like smoke.py: `pcbi --help` must not pay for it
 
@@ -210,6 +213,8 @@ def run_training(
         "split_hash": split_hash(),
         "class_counts_train": dict(zip(CLASS_ORDER, counts.tolist(), strict=True)),
     }
+    if sweep:
+        run_config["sweep"] = dict(sweep)
     run_tags = list(dict.fromkeys(tags or []))  # de-duplicated, order kept
     if overfit_batch is not None and "overfit" not in run_tags:
         run_tags.append("overfit")

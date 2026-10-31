@@ -825,6 +825,177 @@ def pull(
     typer.echo(f"wrote {preds}")
 
 
+@app.command(name="eval")
+def eval_(
+    preds: Path = typer.Option(..., "--preds", help="val_preds.npz from a training run."),
+    out: Path | None = typer.Option(
+        None, help="Folder for report.md and the plots. Defaults to reports/eval/<run>/."
+    ),
+) -> None:
+    """Score saved validation predictions: AUROC, AUPRC, per-class recall, ROC and operating points."""
+    from pcbi.eval import evaluate as evaluate_mod
+
+    if not preds.is_file():
+        typer.echo(f"No such predictions file: {preds}", err=True)
+        raise typer.Exit(code=1)
+    out = out or evaluate_mod.DEFAULT_OUT_DIR / preds.resolve().parent.name
+    try:
+        ev, report = evaluate_mod.run_eval(preds, out)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"{ev.crops} crop(s): {ev.defects} defect, {ev.crops - ev.defects} normal")
+    typer.echo(f"  AUROC {ev.auroc:.3f}   AUPRC {ev.auprc:.3f}")
+    typer.echo(
+        "  recall  "
+        + "  ".join(f"{n} {r:.2f}" for n, r in zip(evaluate_mod.CLASS_ORDER, ev.recall, strict=True))
+    )
+    typer.echo(f"wrote {report}")
+
+
+@app.command()
+def sweep(
+    config: Path = typer.Option(..., "--config", help="Base experiment YAML."),
+    seeds: list[str] = typer.Option(
+        ..., "--seeds", help='Seeds as "0,1,2" or "0 1 2" (quoted), or repeat --seeds.'
+    ),
+    set_: list[str] = typer.Option(
+        [],
+        "--set",
+        help="key=value1,value2,... One run per value and seed. Repeat to sweep several keys.",
+    ),
+    group: str = typer.Option("s3_imbalance", "--group", help="W&B group for every run."),
+    no_wandb: bool = typer.Option(False, "--no-wandb", help="Disable W&B logging entirely."),
+    max_steps: int | None = typer.Option(
+        None, "--max-steps", help="Cap every run at N optimizer steps (a quick plumbing check)."
+    ),
+    manifest: Path = typer.Option(DEFAULT_MANIFEST, help="manifest.csv from `pcbi make-crops`."),
+    crops_dir: Path = typer.Option(DEFAULT_CROPS_DIR, help="Folder holding the crop PNGs."),
+    out_dir: Path = typer.Option(Path("outputs"), help="Parent folder for the run folders."),
+) -> None:
+    """Run one config over several seeds and option values, one run after another."""
+    from omegaconf.errors import OmegaConfBaseException
+
+    from pcbi.train import config as config_mod
+    from pcbi.train import run as run_mod
+    from pcbi.train import sweep as sweep_mod
+
+    if max_steps is not None and max_steps < 1:
+        typer.echo("--max-steps must be at least 1.", err=True)
+        raise typer.Exit(code=2)
+    for path, what in ((config, "config"), (manifest, "manifest")):
+        if not path.is_file():
+            typer.echo(f"No such {what}: {path}", err=True)
+            raise typer.Exit(code=1)
+    if not crops_dir.is_dir():
+        typer.echo(f"No such crops folder: {crops_dir}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        jobs = sweep_mod.expand(sweep_mod.parse_seeds(seeds), set_)
+        # Every config is built and validated before the first run starts, so a bad value in the
+        # last combination fails now rather than hours into the sweep.
+        configs = [config_mod.load_config(config, job.overrides) for job in jobs]
+    except (ValueError, OmegaConfBaseException) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+
+    typer.echo(f"{len(jobs)} run(s) in group {group}:")
+    for i, job in enumerate(jobs, 1):
+        typer.echo(f"  {i:>2}. seed {job.seed}  {job.label or '(base config)'}")
+
+    failed = []
+    for i, (job, cfg) in enumerate(zip(jobs, configs, strict=True), 1):
+        typer.echo(f"\n===== run {i}/{len(jobs)}: seed {job.seed}  {job.label} =====")
+        try:
+            run_dir = run_mod.run_training(
+                cfg,
+                manifest,
+                crops_dir,
+                out_dir,
+                use_wandb=not no_wandb,
+                max_steps=max_steps,
+                group=group,
+                tags=list(job.option.values()),
+                sweep=job.option,
+            )
+            typer.echo(f"wrote {run_dir}")
+        except Exception as exc:  # noqa: BLE001 - one bad run must not cost the rest of the sweep
+            typer.echo(f"run {i} failed: {type(exc).__name__}: {exc}", err=True)
+            failed.append(f"seed {job.seed}  {job.label}")
+
+    typer.echo(f"\n{len(jobs) - len(failed)} of {len(jobs)} run(s) finished.")
+    if failed:
+        for label in failed:
+            typer.echo(f"  failed: {label}", err=True)
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def summarize(
+    group: str = typer.Option("s3_imbalance", "--group", help="W&B group to summarize."),
+    project: str = typer.Option(smoke_mod.DEFAULT_PROJECT, help="W&B project the runs are in."),
+    entity: str | None = typer.Option(None, help="W&B entity. Defaults to your default entity."),
+    out: Path = typer.Option(Path("runs"), help="Where predictions are downloaded and cached."),
+) -> None:
+    """Compare a sweep's options: mean ± std over seeds of the product metrics, as markdown."""
+    from pcbi.eval import summarize as summarize_mod
+
+    try:
+        result = summarize_mod.summarize_group(group, project, entity, out)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"{result.runs} run(s) in group {group}\n")
+    typer.echo(result.table)
+    for line in result.skipped:
+        typer.echo(f"\nskipped {line}", err=True)
+
+
+@app.command()
+def gallery(
+    preds: Path = typer.Option(..., "--preds", help="val_preds.npz from a training run."),
+    per_cell: int = typer.Option(8, "--per-cell", help="Most crops drawn in one matrix cell."),
+    out: Path | None = typer.Option(
+        None, help="Where to write the grid. Defaults to reports/gallery/<run>.png."
+    ),
+    manifest: Path = typer.Option(DEFAULT_MANIFEST, help="manifest.csv from `pcbi make-crops`."),
+    crops_dir: Path = typer.Option(DEFAULT_CROPS_DIR, help="Folder holding the crop PNGs."),
+    polygons: Path = typer.Option(
+        crops_mod.DEFAULT_POLYGONS, help="polygons.csv from `pcbi ingest`; supplies merged_from."
+    ),
+) -> None:
+    """Draw the confusion matrix with the crops themselves, plus a mistakes-only image."""
+    from pcbi.eval import gallery as gallery_mod
+
+    if per_cell < 1:
+        typer.echo("--per-cell must be at least 1.", err=True)
+        raise typer.Exit(code=2)
+    for path, what in ((preds, "predictions file"), (manifest, "manifest")):
+        if not path.is_file():
+            typer.echo(f"No such {what}: {path}", err=True)
+            raise typer.Exit(code=1)
+    if not crops_dir.is_dir():
+        typer.echo(f"No such crops folder: {crops_dir}", err=True)
+        raise typer.Exit(code=1)
+
+    # runs/<run_id>/val_preds.npz and outputs/<stamp>_<id>/val_preds.npz both name the run by
+    # their folder.
+    out = out or gallery_mod.DEFAULT_OUT_DIR / f"{preds.resolve().parent.name}.png"
+    try:
+        result = gallery_mod.make_gallery(preds, manifest, crops_dir, out, per_cell, polygons)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"{result.crops} crop(s), {result.wrong} misclassified")
+    if not result.merged_known:
+        typer.echo(f"  note: no {polygons}, so captions cannot show merged_from")
+    typer.echo(f"wrote {result.matrix}")
+    typer.echo(f"wrote {result.mistakes}")
+
+
 @app.command()
 def env(
     out: Path = typer.Option(Path("reports/latency/env.json"), help="Where to write the profile."),
