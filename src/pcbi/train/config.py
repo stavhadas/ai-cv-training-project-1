@@ -39,6 +39,7 @@ class TrainConfig:
     batch_size: int = 32
     imbalance: ImbalanceConfig = field(default_factory=ImbalanceConfig)
     num_workers: int = 2
+    seed: int = 0
 
     def __post_init__(self) -> None:
         # Runs when OmegaConf turns the merged config back into this dataclass (`to_object`), so
@@ -53,6 +54,8 @@ class TrainConfig:
             raise ValueError(f"batch_size must be at least 1, got {self.batch_size}.")
         if self.num_workers < 0:
             raise ValueError(f"num_workers must be non-negative, got {self.num_workers}.")
+        if not 0 <= self.seed < 2**32:  # NumPy's seed range
+            raise ValueError(f"seed must be in [0, 2**32), got {self.seed}.")
         if isinstance(self.imbalance, ImbalanceConfig):
             if self.imbalance.mode not in MODES:
                 raise ValueError(

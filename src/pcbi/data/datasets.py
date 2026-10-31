@@ -187,6 +187,7 @@ def make_dataloader(
     seed: int = 0,
     shuffle: bool = False,
     sampler: Sampler | None = None,
+    generator: torch.Generator | None = None,
 ) -> DataLoader:
     """Wrap a `CropDataset` in a `DataLoader` whose behaviour is a function of `seed` alone.
 
@@ -201,12 +202,16 @@ def make_dataloader(
 
     `sampler` replaces shuffling outright (e.g. `imbalance.build_sampler`'s weighted sampler), so
     passing it together with `shuffle=True` is refused rather than left to torch's terser error.
+
+    `generator` lets the caller supply an already-seeded generator (`seeding.make_generator`);
+    without one, a generator is seeded from `seed` here.
     """
     if sampler is not None and shuffle:
         raise ValueError("pass shuffle=True or a sampler, not both; the sampler decides order.")
     cfg = cfg or {}
-    generator = torch.Generator()
-    generator.manual_seed(seed)
+    if generator is None:
+        generator = torch.Generator()
+        generator.manual_seed(seed)
 
     return DataLoader(
         dataset,

@@ -6,6 +6,7 @@ lr: 0.01                  # provisional: Step 5 tries two or three values on Kag
 epochs: 200                # provisional: long enough for the validation curve to flatten
 batch_size: 32
 num_workers: 2
+seed: 0                   # `pcbi train --seed N` overrides this
 imbalance:
   # Train counts are excess 93 / spike 72 / normal 39 / insufficient 34 (about 2.7:1), and there are
   # only 238 train crops. A weighted loss keeps every crop seen once per epoch; a weighted sampler

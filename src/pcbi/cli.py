@@ -739,8 +739,16 @@ def train(
     manifest: Path = typer.Option(DEFAULT_MANIFEST, help="manifest.csv from `pcbi make-crops`."),
     crops_dir: Path = typer.Option(DEFAULT_CROPS_DIR, help="Folder holding the crop PNGs."),
     out_dir: Path = typer.Option(Path("outputs"), help="Parent folder for the run folder."),
+    seed: int | None = typer.Option(
+        None, "--seed", help="Seed for every RNG. Defaults to the config's `seed` (0 if unset)."
+    ),
+    group: str = typer.Option(
+        "s2_first", "--group", help="W&B group, so repeated runs overlay in one panel."
+    ),
 ) -> None:
-    """Train a classifier on the crops, validating every epoch; log to W&B group s2_first."""
+    """Train a classifier on the crops, validating every epoch; log to the given W&B group."""
+    import dataclasses
+
     from omegaconf.errors import OmegaConfBaseException
 
     # Imported here, not at the top: torch and timm would make every other command slow to start.
@@ -751,6 +759,9 @@ def train(
         if value is not None and value < 1:
             typer.echo(f"{flag} must be at least 1.", err=True)
             raise typer.Exit(code=2)
+    if not group.strip():
+        typer.echo("--group must not be empty.", err=True)
+        raise typer.Exit(code=2)
     if not config.is_file():
         typer.echo(f"No such config: {config}", err=True)
         raise typer.Exit(code=1)
@@ -766,6 +777,8 @@ def train(
 
     try:
         cfg = config_mod.load_config(config)
+        if seed is not None:
+            cfg = dataclasses.replace(cfg, seed=seed)  # re-runs the config's value checks
     except (ValueError, OmegaConfBaseException) as exc:
         typer.echo(f"{config}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -779,6 +792,7 @@ def train(
             use_wandb=not no_wandb,
             max_steps=max_steps,
             overfit_batch=overfit_batch,
+            group=group,
         )
     except ValueError as exc:  # missing manifest, empty split, bad labels: named by the dataset
         typer.echo(str(exc), err=True)

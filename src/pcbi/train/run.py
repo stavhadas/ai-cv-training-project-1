@@ -44,10 +44,10 @@ from pcbi.train.config import TrainConfig
 from pcbi.train.imbalance import build_criterion, build_sampler, class_counts_from_manifest
 from pcbi.train.loop import train_one_epoch, validate
 from pcbi.train.models import build_model
+from pcbi.train.seeding import make_generator, seed_everything
 
 WANDB_GROUP = "s2_first"
 SGD_MOMENTUM = 0.9
-SEED = 0
 DEFAULT_OUT_DIR = Path("outputs")
 DEFAULT_META = Path("data/manifest_meta.json")
 
@@ -136,21 +136,24 @@ def run_training(
     max_steps: int | None = None,
     overfit_batch: int | None = None,
     pretrained: bool = True,
+    group: str = WANDB_GROUP,
 ) -> Path:
     """Train `cfg.model` on the train split, validating every epoch. Returns the run folder.
 
     Args:
-        cfg: the loaded experiment config.
+        cfg: the loaded experiment config; `cfg.seed` seeds every RNG before anything random runs.
         manifest, crops_dir: where `pcbi make-crops` wrote its output (Kaggle mounts it elsewhere).
         out_dir: parent of the run folder.
         use_wandb: ``False`` disables W&B entirely; otherwise online with a key, offline without.
         max_steps: stop after this many optimizer steps in total, then validate once.
         overfit_batch: train and evaluate on the first N training crops only.
         pretrained: load ImageNet weights. Tests pass ``False`` so they need no network.
+        group: the W&B run group, so repeated runs of one experiment overlay in one panel.
     """
     import wandb  # lazily, like smoke.py: `pcbi --help` must not pay for it
 
-    torch.manual_seed(SEED)
+    # First, before the model is built: the new head's random init must come from this seed.
+    seed_everything(cfg.seed)
     device = pick_device()
 
     model, data_config = build_model(cfg.model, pretrained=pretrained)
@@ -175,16 +178,20 @@ def run_training(
             range(min(overfit_batch, len(train_ds))),
         )
         loader_cfg["batch_size"] = min(len(subset), cfg.batch_size)
-        train_loader = make_dataloader(subset, loader_cfg, seed=SEED)
-        eval_loader = make_dataloader(subset, loader_cfg, seed=SEED)
+        train_loader = make_dataloader(subset, loader_cfg, generator=make_generator(cfg.seed))
+        eval_loader = make_dataloader(subset, loader_cfg, seed=cfg.seed)
         eval_name = f"overfit-{len(subset)}"
     else:
         sampler = build_sampler(imbalance_cfg, train_ds, counts)
         train_loader = make_dataloader(
-            train_ds, loader_cfg, seed=SEED, shuffle=sampler is None, sampler=sampler
+            train_ds,
+            loader_cfg,
+            shuffle=sampler is None,
+            sampler=sampler,
+            generator=make_generator(cfg.seed),
         )
         val_ds = CropDataset(manifest, crops_dir, "val", build_eval_transform(data_config))
-        eval_loader = make_dataloader(val_ds, loader_cfg, seed=SEED)
+        eval_loader = make_dataloader(val_ds, loader_cfg, seed=cfg.seed)
         eval_name = "val"
 
     optimizer = build_optimizer(cfg, model)
@@ -195,13 +202,12 @@ def run_training(
         "max_steps": max_steps,
         "overfit_batch": overfit_batch,
         "device": device.type,
-        "seed": SEED,
         "split_hash": split_hash(),
         "class_counts_train": dict(zip(CLASS_ORDER, counts.tolist(), strict=True)),
     }
     run = wandb.init(
         project=smoke.DEFAULT_PROJECT,
-        group=WANDB_GROUP,
+        group=group,
         job_type="train",
         mode=smoke.resolve_mode() if use_wandb else "disabled",
         config=run_config,
